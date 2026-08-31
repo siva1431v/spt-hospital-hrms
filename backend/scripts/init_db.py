@@ -86,8 +86,8 @@ async def init_database():
             if shift_count == 0:
                 print("Seeding shifts...")
                 os.environ.setdefault("PYTHONPATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                from database.seeds.seed_real_shifts import seed_shifts
-                await seed_shifts()
+                from database.seeds.seed_real_shifts import seed_real_shifts
+                await seed_real_shifts()
                 print("✓ Shifts seeded.")
             else:
                 print(f"⏭ Shifts already seeded ({shift_count} found).")
