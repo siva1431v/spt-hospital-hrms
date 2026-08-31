@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # Database
-    DATABASE_URL: str = "sqlite+aiosqlite:////Users/siva/Desktop/Projects/spt-hospital-hrms/backend/spt_hrms.db"
-    SYNC_DATABASE_URL: str = "sqlite:////Users/siva/Desktop/Projects/spt-hospital-hrms/backend/spt_hrms.db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///spt_hrms.db"
+    SYNC_DATABASE_URL: str = "sqlite:///spt_hrms.db"
 
     # Auth
     JWT_SECRET: str = "dev-secret-change-me"
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]
 
     # File Upload
-    UPLOAD_DIR: str = "/Users/siva/Desktop/Projects/spt-hospital-hrms/backend/uploads"
+    UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE_MB: int = 50
 
     @property
