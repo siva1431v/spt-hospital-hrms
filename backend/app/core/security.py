@@ -21,11 +21,16 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def get_password_hash(password: str) -> str:
+def hash_password(password: str) -> str:
     """Hash a password using bcrypt."""
     pw_bytes = password.encode("utf-8")[:72]
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(pw_bytes, salt).decode("utf-8")
+
+
+def get_password_hash(password: str) -> str:
+    """Hash a password using bcrypt (alias for get_password_hash)."""
+    return hash_password(password)
 
 
 def create_access_token(

@@ -37,61 +37,65 @@ async def init_database():
 
     print("✓ Tables created.")
 
-    # Seed admin user if not exists
-    from passlib.context import CryptContext
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    # Wrap seed block in try/except to prevent database seed failures from crashing startup
+    try:
+        from app.core.security import hash_password
 
-    async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
 
-        # Check if admin user already exists
-        existing = await db.execute(select(User).where(User.username == "admin"))
-        if existing.scalar_one_or_none() is None:
-            admin = User(
-                username="admin",
-                email="admin@spthospital.com",
-                hashed_password=pwd_context.hash("Admin@123"),
-                role=UserRole.SUPER_ADMIN,
-                is_active=True,
-                full_name="System Administrator",
-            )
-            db.add(admin)
-            print("✓ Created admin user (admin / Admin@123)")
-        else:
-            print("⏭ Admin user already exists.")
+            # Check if admin user already exists
+            existing = await db.execute(select(User).where(User.username == "admin"))
+            if existing.scalar_one_or_none() is None:
+                admin = User(
+                    username="admin",
+                    email="admin@spthospital.com",
+                    hashed_password=hash_password("Admin@123"),
+                    role=UserRole.SUPER_ADMIN,
+                    is_active=True,
+                    full_name="System Administrator",
+                )
+                db.add(admin)
+                print("✓ Created admin user (admin / Admin@123)")
+            else:
+                print("⏭ Admin user already exists.")
 
-        # HR user
-        existing_hr = await db.execute(select(User).where(User.username == "hr"))
-        if existing_hr.scalar_one_or_none() is None:
-            hr = User(
-                username="hr",
-                email="hr@spthospital.com",
-                hashed_password=pwd_context.hash("HR@123"),
-                role=UserRole.HR_ADMIN,
-                is_active=True,
-                full_name="HR Administrator",
-            )
-            db.add(hr)
-            print("✓ Created HR user (hr / HR@123)")
-        else:
-            print("⏭ HR user already exists.")
+            # HR user
+            existing_hr = await db.execute(select(User).where(User.username == "hr"))
+            if existing_hr.scalar_one_or_none() is None:
+                hr = User(
+                    username="hr",
+                    email="hr@spthospital.com",
+                    hashed_password=hash_password("HR@123"),
+                    role=UserRole.HR_ADMIN,
+                    is_active=True,
+                    full_name="HR Administrator",
+                )
+                db.add(hr)
+                print("✓ Created HR user (hr / HR@123)")
+            else:
+                print("⏭ HR user already exists.")
 
-        await db.commit()
+            await db.commit()
 
-    # Seed shifts
-    async with AsyncSessionLocal() as db:
-        from sqlalchemy import select, func
-        count = await db.execute(select(func.count()).select_from(Shift))
-        if count.scalar() == 0:
-            print("Seeding shifts...")
-            os.environ.setdefault("PYTHONPATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from database.seeds.seed_real_shifts import seed_shifts
-            await seed_shifts()
-            print("✓ Shifts seeded.")
-        else:
-            print(f"⏭ Shifts already seeded ({count} found).")
+        # Seed shifts
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select, func
+            count = await db.execute(select(func.count()).select_from(Shift))
+            shift_count = count.scalar()
+            if shift_count == 0:
+                print("Seeding shifts...")
+                os.environ.setdefault("PYTHONPATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                from database.seeds.seed_real_shifts import seed_shifts
+                await seed_shifts()
+                print("✓ Shifts seeded.")
+            else:
+                print(f"⏭ Shifts already seeded ({shift_count} found).")
 
-    print("\n✅ Database initialization complete!")
+        print("\n✅ Database initialization complete!")
+    except Exception as e:
+        print(f"⚠️ Error seeding database: {e}", file=sys.stderr)
+        # Log error but do not fail startup (tables are already created, which is fatal)
 
 
 if __name__ == "__main__":
