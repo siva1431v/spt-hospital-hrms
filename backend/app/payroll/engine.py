@@ -108,6 +108,16 @@ class PayrollEngine:
         att_result = await self.db.execute(att_query)
         attendance_records = att_result.scalars().all()
 
+        # 1. Load pre-computed monthly aggregate from PDF import (if any)
+        agg_result = await self.db.execute(
+            select(MonthlyAttendanceAggregate).where(
+                MonthlyAttendanceAggregate.employee_id == employee_id,
+                MonthlyAttendanceAggregate.year == year,
+                MonthlyAttendanceAggregate.month == month,
+            )
+        )
+        monthly_agg = agg_result.scalar_one_or_none()
+
         # Load attendance records for the month if present_days not overridden
         if override_inputs and "present_days" in override_inputs:
             present_days = float(override_inputs["present_days"])
@@ -119,6 +129,9 @@ class PayrollEngine:
                 if a.status in [AttendanceStatus.PRESENT, AttendanceStatus.PRESENT_OVERNIGHT]
                 or (a.status == AttendanceStatus.PRESENT_INCOMPLETE and a.is_corrected)
             ))
+            # Fallback to monthly aggregate present_count if no daily attendance records exist
+            if present_days == 0 and monthly_agg and monthly_agg.present_count > 0:
+                present_days = float(monthly_agg.present_count)
 
         # Load system settings
         from app.models.audit import SystemSetting
@@ -138,15 +151,6 @@ class PayrollEngine:
             logger.warning(f"Could not load system settings: {e}")
 
         # Determine Loss of Pay (LOP) days & qualifying late arrivals
-        # 1. Load pre-computed monthly aggregate from PDF import (if any)
-        agg_result = await self.db.execute(
-            select(MonthlyAttendanceAggregate).where(
-                MonthlyAttendanceAggregate.employee_id == employee_id,
-                MonthlyAttendanceAggregate.year == year,
-                MonthlyAttendanceAggregate.month == month,
-            )
-        )
-        monthly_agg = agg_result.scalar_one_or_none()
 
         # Check if employee has zero punches in attendance records / aggregate
         has_punches = any(

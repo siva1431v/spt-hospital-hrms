@@ -381,11 +381,149 @@ class AttendanceImportService:
         )
         self.db.add(import_session)
         await self.db.flush()
-
         imported = 0
         skipped = 0
         updated = 0
         errors = 0
+
+        # Special handling for Monthly Status Report (Summary Report)
+        if preview_data.get("report_type") == "Monthly Status Report (Summary Report)":
+            for record_data in preview_data["records"]:
+                emp_code = record_data.get("employee_code")
+                dept_name = record_data.get("department_name", "")
+                att_date_str = record_data.get("attendance_date")
+
+                emp = employee_map.get(emp_code)
+                if not emp and employee_mappings:
+                    manual_id = employee_mappings.get(emp_code)
+                    if manual_id:
+                        result = await self.db.execute(select(Employee).where(Employee.id == int(manual_id)))
+                        emp = result.scalar_one_or_none()
+
+                dept_key = dept_name.upper().strip()
+                dept = dept_map.get(dept_key)
+                dept_id = dept.id if dept else None
+                if not dept and department_mappings:
+                    manual_dept_id = department_mappings.get(dept_name)
+                    if manual_dept_id:
+                        dept_id = int(manual_dept_id)
+
+                ir = AttendanceImportRecord(
+                    import_id=import_session.id,
+                    raw_date=att_date_str,
+                    raw_department=dept_name,
+                    raw_employee_code=emp_code,
+                    raw_employee_name=record_data.get("employee_name"),
+                    raw_shift=record_data.get("shift_code"),
+                    raw_in_time=record_data.get("in_time"),
+                    raw_out_time=record_data.get("out_time"),
+                    raw_work_duration=record_data.get("work_duration"),
+                    raw_ot=record_data.get("ot"),
+                    raw_status=record_data.get("status"),
+                    mapped_employee_id=emp.id if emp else None,
+                    mapped_department_id=dept_id,
+                    is_duplicate=False,
+                    has_warning=bool(record_data.get("warnings")),
+                    warning_message=",".join(record_data.get("warnings") or []),
+                )
+                self.db.add(ir)
+                if emp:
+                    imported += 1
+                else:
+                    errors += 1
+
+            # Persist monthly aggregates
+            monthly_aggs = preview_data.get("monthly_aggregates", [])
+            if monthly_aggs:
+                from app.models.attendance import MonthlyAttendanceAggregate
+                for agg_data in monthly_aggs:
+                    emp_code = str(agg_data.get("employee_code", "")).strip()
+                    emp = employee_map.get(emp_code)
+                    if not emp and employee_mappings and emp_code in employee_mappings:
+                        mapped_id = int(employee_mappings[emp_code])
+                        emp_result = await self.db.execute(
+                            select(Employee).where(Employee.id == mapped_id)
+                        )
+                        emp = emp_result.scalar_one_or_none()
+
+                    year = preview_data.get("date_range_start")
+                    month_val = None
+                    if year:
+                        from datetime import date as date_type
+                        if isinstance(year, str):
+                            dt = date_type.fromisoformat(year)
+                        else:
+                            dt = year
+                        year = dt.year
+                        month_val = dt.month
+
+                    if year and month_val:
+                        if emp:
+                            await self.db.execute(
+                                delete(MonthlyAttendanceAggregate).where(
+                                    MonthlyAttendanceAggregate.employee_id == emp.id,
+                                    MonthlyAttendanceAggregate.year == year,
+                                    MonthlyAttendanceAggregate.month == month_val,
+                                )
+                            )
+
+                        new_agg = MonthlyAttendanceAggregate(
+                            import_id=import_session.id,
+                            employee_id=emp.id if emp else None,
+                            employee_code=emp_code,
+                            employee_name=agg_data.get("employee_name", ""),
+                            department_name=agg_data.get("department_name", ""),
+                            company_name=agg_data.get("company_name", ""),
+                            year=year,
+                            month=month_val,
+                            total_work_duration=agg_data.get("total_work_duration"),
+                            total_ot=agg_data.get("total_ot"),
+                            present_count=agg_data.get("present_count", 0),
+                            absent_count=agg_data.get("absent_count", 0),
+                            weekly_off_count=agg_data.get("weekly_off_count", 0),
+                            holidays_count=agg_data.get("holidays_count", 0),
+                            leaves_taken=agg_data.get("leaves_taken", 0),
+                            late_by_hrs=agg_data.get("late_by_hrs"),
+                            late_by_days=agg_data.get("late_by_days", 0),
+                            late_days_device=agg_data.get("late_days_device", 0),
+                            late_days_qualifying=agg_data.get("late_days_qualifying", 0),
+                            lop_days=agg_data.get("lop_days", 0),
+                            early_by_hrs=agg_data.get("early_by_hrs"),
+                            early_going_by_days=agg_data.get("early_going_by_days", 0),
+                            total_duration_with_ot=agg_data.get("total_duration_with_ot"),
+                            average_working_hrs=agg_data.get("average_working_hrs"),
+                            has_zero_punches=agg_data.get("has_zero_punches", False),
+                        )
+                        self.db.add(new_agg)
+
+            import_session.report_type = preview_data.get("report_type")
+            import_session.company_name = preview_data.get("company_name")
+            import_session.records_imported = imported
+            import_session.records_duplicate = 0
+            import_session.records_error = errors
+            import_session.total_records_in_pdf = len(preview_data["records"])
+            import_session.status = ImportStatus.COMPLETED if errors == 0 else ImportStatus.COMPLETED_WITH_WARNINGS
+
+            await log_audit(
+                self.db, self.user_id, "IMPORT", "AttendanceImport",
+                str(import_session.id),
+                f"Imported attendance summary PDF: {preview_data['filename']} "
+                f"({imported} summary records, {errors} errors)",
+            )
+
+            await self.db.commit()
+
+            return {
+                "import_id": import_session.id,
+                "imported": imported,
+                "updated": 0,
+                "skipped": 0,
+                "errors": errors,
+                "total_in_file": len(preview_data["records"]),
+                "status": import_session.status.value,
+                "date_range_start": preview_data.get("date_range_start"),
+                "date_range_end": preview_data.get("date_range_end"),
+            }
 
         processed_emp_dates: set[tuple[int, date]] = set()
 
