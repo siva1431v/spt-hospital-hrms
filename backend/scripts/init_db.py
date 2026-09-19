@@ -92,6 +92,27 @@ async def init_database():
             else:
                 print(f"⏭ Shifts already seeded ({shift_count} found).")
 
+        # Seed core database (employees, departments, designations, settings, aliases) if empty
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select, func, text
+            from app.models.employee import Employee
+            emp_count_res = await db.execute(select(func.count()).select_from(Employee))
+            emp_count = emp_count_res.scalar()
+            if emp_count == 0:
+                seed_sql_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "initial_seed.sql")
+                if os.path.exists(seed_sql_path):
+                    print(f"Seeding core database from {seed_sql_path}...")
+                    with open(seed_sql_path, "r", encoding="utf-8") as f:
+                        sql_content = f.read()
+                    for statement in sql_content.split(";"):
+                        statement = statement.strip()
+                        if statement:
+                            await db.execute(text(statement))
+                    await db.commit()
+                    print("✓ Core database seeded (66 employees, departments, settings).")
+            else:
+                print(f"⏭ Employees already exist ({emp_count} found).")
+
         print("\n✅ Database initialization complete!")
     except Exception as e:
         print(f"⚠️ Error seeding database: {e}", file=sys.stderr)
