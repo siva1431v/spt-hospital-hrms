@@ -26,25 +26,35 @@ export default function LeaveManagementPage() {
   const [showEmpDropdown, setShowEmpDropdown] = useState(false)
   const [selectedEmpLabel, setSelectedEmpLabel] = useState('')
 
-  const fetchLeaveData = async () => {
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const refresh = () => {
     setLoading(true)
-    try {
-      const [reqRes, typesRes] = await Promise.all([
-        api.get('/leaves'),
-        api.get('/leave-types'),
-      ])
-      setRequests(reqRes.data.items || [])
-      setLeaveTypes(typesRes.data.items || [])
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
+    setRefreshTrigger((n) => n + 1)
   }
 
   useEffect(() => {
-    fetchLeaveData()
-  }, [])
+    let active = true
+    async function load() {
+      try {
+        const [reqRes, typesRes] = await Promise.all([
+          api.get('/leaves'),
+          api.get('/leave-types'),
+        ])
+        if (active) {
+          setRequests(reqRes.data.items || [])
+          setLeaveTypes(typesRes.data.items || [])
+        }
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [refreshTrigger])
 
   // Fetch employees for the searchable picker
   useEffect(() => {
@@ -85,16 +95,17 @@ export default function LeaveManagementPage() {
       setShowApplyModal(false)
       setEmployeeId(null)
       setSelectedEmpLabel('')
-      fetchLeaveData()
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to submit leave request.')
+      refresh()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to submit leave request.'
+      alert(msg)
     }
   }
 
   const handleApprove = async (id: number) => {
     try {
       await api.put(`/leaves/${id}/approve`, { comment: 'Approved by HR' })
-      fetchLeaveData()
+      refresh()
     } catch (err) {
       alert('Failed to approve leave.')
     }
@@ -103,7 +114,7 @@ export default function LeaveManagementPage() {
   const handleReject = async (id: number) => {
     try {
       await api.put(`/leaves/${id}/reject`, { comment: 'Rejected by HR' })
-      fetchLeaveData()
+      refresh()
     } catch (err) {
       alert('Failed to reject leave.')
     }

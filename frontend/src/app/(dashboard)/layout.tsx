@@ -1,17 +1,18 @@
 'use client'
 
 import MainLayout from '@/components/layout/MainLayout'
-import { useEffect, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import { isAuthenticated } from '@/lib/auth'
 import { Loader2 } from 'lucide-react'
 
+const emptySubscribe = () => () => {}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const [mounted, setMounted] = useState(false)
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false)
 
   useEffect(() => {
-    setMounted(true)
     if (!isAuthenticated()) {
       router.push('/login')
     }

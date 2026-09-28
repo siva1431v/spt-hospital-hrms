@@ -13,13 +13,12 @@ from sqlalchemy import select, delete
 
 from app.core.database import AsyncSessionLocal
 from app.models.payroll import PayrollPeriod, PayrollRecord, PayrollStatus
-
-BASE_URL = "http://localhost:8000"
+from app.main import app
 
 
 @pytest.mark.asyncio
 async def test_month_year_payroll_flow():
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # 1. Login
         login_res = await client.post("/api/v1/auth/login", json={"username": "admin", "password": "Admin@123"})
         assert login_res.status_code == 200

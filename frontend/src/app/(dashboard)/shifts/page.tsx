@@ -1,16 +1,26 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Plus, Clock, Moon, Sun, Loader2, Trash2, Edit, ArrowLeftRight } from 'lucide-react'
+import { Plus, Moon, Sun, Loader2, Trash2, Edit, ArrowLeftRight } from 'lucide-react'
 import api from '@/lib/api'
 import { Shift } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
+interface ShiftAlias {
+  id?: number
+  device_code: string
+  shift_id: number
+  shift_name?: string
+  shift_code?: string
+  shift?: Shift
+  created_at?: string
+}
+
 export default function ShiftsPage() {
   const [shifts, setShifts] = useState<Shift[]>([])
-  const [aliases, setAliases] = useState<any[]>([])
+  const [aliases, setAliases] = useState<ShiftAlias[]>([])
   const [loading, setLoading] = useState(true)
   const [showDialog, setShowDialog] = useState(false)
   const [showAliasDialog, setShowAliasDialog] = useState(false)
@@ -30,26 +40,35 @@ export default function ShiftsPage() {
   const [isSplit, setIsSplit] = useState(false)
   const [startTime2, setStartTime2] = useState('13:00')
   const [endTime2, setEndTime2] = useState('17:00')
-
-  const fetchShiftsAndAliases = async () => {
-    setLoading(true)
-    try {
-      const [shiftRes, aliasRes] = await Promise.allSettled([
-        api.get('/shifts'),
-        api.get('/shifts/aliases'),
-      ])
-      if (shiftRes.status === 'fulfilled') setShifts(shiftRes.value.data.items || [])
-      if (aliasRes.status === 'fulfilled') setAliases(aliasRes.value.data.items || [])
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
   useEffect(() => {
-    fetchShiftsAndAliases()
-  }, [])
+    let active = true
+    async function load() {
+      try {
+        const [shiftRes, aliasRes] = await Promise.allSettled([
+          api.get('/shifts'),
+          api.get('/shifts/aliases'),
+        ])
+        if (active) {
+          if (shiftRes.status === 'fulfilled') setShifts(shiftRes.value.data.items || [])
+          if (aliasRes.status === 'fulfilled') setAliases(aliasRes.value.data.items || [])
+        }
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [refreshTrigger])
+
+  const refreshShiftsAndAliases = () => {
+    setRefreshTrigger((n) => n + 1)
+  }
 
   const handleCreateAlias = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,18 +81,20 @@ export default function ShiftsPage() {
       setShowAliasDialog(false)
       setNewDeviceCode('')
       setNewAliasShiftId('')
-      fetchShiftsAndAliases()
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to create shift alias.')
+      refreshShiftsAndAliases()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || 'Failed to create shift alias.')
     }
   }
 
   const handleDeleteAlias = async (aliasId: number) => {
     try {
       await api.delete(`/shifts/aliases/${aliasId}`)
-      fetchShiftsAndAliases()
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to delete shift alias.')
+      refreshShiftsAndAliases()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || 'Failed to delete shift alias.')
     }
   }
 
@@ -98,9 +119,10 @@ export default function ShiftsPage() {
         await api.post('/shifts', payload)
       }
       closeDialog()
-      fetchShiftsAndAliases()
-    } catch (err: any) {
-      alert(err.response?.data?.detail || `Failed to ${editingShift ? 'update' : 'create'} shift.`)
+      refreshShiftsAndAliases()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || `Failed to ${editingShift ? 'update' : 'create'} shift.`)
     }
   }
 
@@ -109,12 +131,13 @@ export default function ShiftsPage() {
     try {
       await api.delete(`/shifts/${deletingShift.id}`)
       setDeletingShift(null)
-      fetchShiftsAndAliases()
-    } catch (err: any) {
-      if (err.response?.status === 409) {
+      refreshShiftsAndAliases()
+    } catch (err: unknown) {
+      const axErr = err as { response?: { status?: number; data?: { detail?: string } } }
+      if (axErr.response?.status === 409) {
         alert('Cannot delete this shift because it is currently assigned to employees.')
       } else {
-        alert(err.response?.data?.detail || 'Failed to delete shift.')
+        alert(axErr.response?.data?.detail || 'Failed to delete shift.')
       }
       setDeletingShift(null)
     }
@@ -361,7 +384,7 @@ export default function ShiftsPage() {
                       <td className="p-3 font-mono text-slate-600">{alias.shift_code || '—'}</td>
                       <td className="p-3 text-right pr-4">
                         <button
-                          onClick={() => handleDeleteAlias(alias.id)}
+                          onClick={() => alias.id && handleDeleteAlias(alias.id)}
                           className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors"
                           title="Delete Alias"
                         >

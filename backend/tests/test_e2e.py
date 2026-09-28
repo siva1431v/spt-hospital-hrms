@@ -2,12 +2,12 @@ import asyncio
 import httpx
 import pytest
 
-BASE_URL = "http://localhost:8000"
+from app.main import app
 
 @pytest.mark.asyncio
 async def test_health_endpoint():
     """Verify that the health check endpoint returns 200 OK and healthy status."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health")
         assert response.status_code == 200
         data = response.json()
@@ -17,7 +17,7 @@ async def test_health_endpoint():
 @pytest.mark.asyncio
 async def test_invalid_login():
     """Verify login failure with incorrect credentials."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/v1/auth/login",
             json={"username": "admin", "password": "wrong_password"}
@@ -28,7 +28,7 @@ async def test_invalid_login():
 @pytest.mark.asyncio
 async def test_admin_login_and_me():
     """Verify login success and the /me profile retrieval with the generated token."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # 1. Login
         login_response = await client.post(
             "/api/v1/auth/login",
@@ -52,7 +52,7 @@ async def test_admin_login_and_me():
 @pytest.mark.asyncio
 async def test_employee_crud():
     """Verify that a SUPER_ADMIN can create and query employees."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # Login
         login_response = await client.post(
             "/api/v1/auth/login",
@@ -100,7 +100,7 @@ async def test_employee_crud():
 @pytest.mark.asyncio
 async def test_departments_and_shifts():
     """Verify querying list of departments and shifts."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         login_response = await client.post(
             "/api/v1/auth/login",
             json={"username": "admin", "password": "Admin@123"}

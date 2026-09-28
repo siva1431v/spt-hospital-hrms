@@ -9,7 +9,7 @@ from typing import Annotated, Optional
 from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, extract
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
@@ -251,6 +251,8 @@ async def list_attendance(
     attendance_date: Optional[date] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
     department_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
@@ -276,6 +278,10 @@ async def list_attendance(
         query = query.where(Attendance.attendance_date >= date_from)
     if date_to:
         query = query.where(Attendance.attendance_date <= date_to)
+    if year and isinstance(year, int):
+        query = query.where(extract("year", Attendance.attendance_date) == year)
+    if month and isinstance(month, int):
+        query = query.where(extract("month", Attendance.attendance_date) == month)
 
     # Department filter
     if department_id:
@@ -353,7 +359,7 @@ async def list_attendance(
 async def monthly_attendance_summary(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
-    year: int = Query(...),
+    year: int = Query(..., ge=2020, le=2050),
     month: int = Query(..., ge=1, le=12),
     department_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
@@ -516,7 +522,7 @@ async def monthly_attendance_summary(
 async def lateness_and_lop_report(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
-    year: int = Query(2026),
+    year: int = Query(2026, ge=2020, le=2050),
     month: int = Query(8, ge=1, le=12),
     department_id: Optional[int] = Query(None),
 ):

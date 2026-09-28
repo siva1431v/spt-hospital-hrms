@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Cross, Lock, User, Eye, EyeOff, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { setTokens, setUser } from '@/lib/auth'
@@ -16,17 +16,15 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isExpired, setIsExpired] = useState(false)
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search)
-      if (params.get('expired') === '1' || sessionStorage.getItem('session_expired') === '1') {
-        setIsExpired(true)
-        sessionStorage.removeItem('session_expired')
-      }
+  const [isExpired] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const params = new URLSearchParams(window.location.search)
+    const expired = params.get('expired') === '1' || sessionStorage.getItem('session_expired') === '1'
+    if (expired) {
+      sessionStorage.removeItem('session_expired')
     }
-  }, [])
+    return expired
+  })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -39,8 +37,9 @@ export default function LoginPage() {
       setTokens(access_token, refresh_token)
       setUser(user)
       router.push('/dashboard')
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Invalid username or password. Please try again.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg || 'Invalid username or password. Please try again.')
     } finally {
       setLoading(false)
     }

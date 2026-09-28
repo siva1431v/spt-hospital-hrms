@@ -17,22 +17,30 @@ export default function DepartmentsPage() {
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [description, setDescription] = useState('')
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
-  const fetchDepartments = async () => {
+  const refresh = () => {
     setLoading(true)
-    try {
-      const res = await api.get('/departments')
-      setDepartments(res.data.items || [])
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
+    setRefreshTrigger((n) => n + 1)
   }
 
   useEffect(() => {
-    fetchDepartments()
-  }, [])
+    let active = true
+    async function load() {
+      try {
+        const res = await api.get('/departments')
+        if (active) setDepartments(res.data.items || [])
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [refreshTrigger])
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -43,9 +51,10 @@ export default function DepartmentsPage() {
         await api.post('/departments', { name, code: code.toUpperCase(), description })
       }
       closeDialog()
-      fetchDepartments()
-    } catch (err: any) {
-      alert(err.response?.data?.detail || `Failed to ${editingDept ? 'update' : 'create'} department.`)
+      refresh()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || `Failed to ${editingDept ? 'update' : 'create'} department.`
+      alert(msg)
     }
   }
 
@@ -54,12 +63,14 @@ export default function DepartmentsPage() {
     try {
       await api.delete(`/departments/${deletingDept.id}`)
       setDeletingDept(null)
-      fetchDepartments()
-    } catch (err: any) {
-      if (err.response?.status === 409) {
+      refresh()
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      if (status === 409) {
         alert('Cannot delete this department because it is currently in use by employees or shifts.')
       } else {
-        alert(err.response?.data?.detail || 'Failed to delete department.')
+        alert(msg || 'Failed to delete department.')
       }
       setDeletingDept(null)
     }

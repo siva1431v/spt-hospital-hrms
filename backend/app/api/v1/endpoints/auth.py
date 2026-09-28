@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.security import verify_password, create_access_token, create_refresh_token, decode_token
 from app.core.deps import get_current_active_user, CurrentUser
 from app.models.user import User
-from app.schemas.auth import TokenResponse, LoginRequest, UserResponse
+from app.schemas.auth import TokenResponse, LoginRequest, UserResponse, RefreshTokenRequest
 from jose import JWTError
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -62,7 +62,7 @@ async def login(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
-    refresh_token_str: str,
+    refresh_data: RefreshTokenRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Exchange a refresh token for a new access token."""
@@ -71,7 +71,7 @@ async def refresh_token(
         detail="Invalid or expired refresh token",
     )
     try:
-        payload = decode_token(refresh_token_str)
+        payload = decode_token(refresh_data.refresh_token)
         if payload.get("type") != "refresh":
             raise credentials_exception
         user_id = payload.get("sub")

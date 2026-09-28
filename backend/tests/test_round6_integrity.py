@@ -37,7 +37,9 @@ async def test_round6_data_integrity_and_pdf_import():
         assert commit_res.get('imported') is not None
 
     # 2. Verify Database Acceptance Metrics
-    conn = sqlite3.connect('spt_hrms.db')
+    from app.core.config import settings
+    test_db_file = settings.SYNC_DATABASE_URL.replace("sqlite:///", "")
+    conn = sqlite3.connect(test_db_file)
     cursor = conn.cursor()
 
     # Bhuvaneshwari

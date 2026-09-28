@@ -3,8 +3,8 @@ SPT Hospital HRMS — Dashboard API Endpoints
 Returns real data from the database for the frontend dashboard.
 """
 from datetime import date, timedelta
-from typing import Annotated
-from fastapi import APIRouter, Depends
+from typing import Annotated, Optional
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, extract
 
@@ -22,11 +22,13 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 async def get_dashboard_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
 ):
     """Get KPI stats for the dashboard. All data is live from the database."""
     today = date.today()
-    current_month = today.month
-    current_year = today.year
+    current_month = month if isinstance(month, int) else today.month
+    current_year = year if isinstance(year, int) else today.year
 
     # Total active employees
     total_employees_result = await db.execute(
@@ -153,9 +155,13 @@ async def attendance_trend(
 async def dept_attendance(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
 ):
     """Department-wise attendance for current month."""
     today = date.today()
+    target_year = year if isinstance(year, int) else today.year
+    target_month = month if isinstance(month, int) else today.month
     from app.models.department import Department
 
     result = await db.execute(
@@ -166,8 +172,8 @@ async def dept_attendance(
         )
         .join(Department, Attendance.department_id == Department.id)
         .where(
-            extract("year", Attendance.attendance_date) == today.year,
-            extract("month", Attendance.attendance_date) == today.month,
+            extract("year", Attendance.attendance_date) == target_year,
+            extract("month", Attendance.attendance_date) == target_month,
         )
         .group_by(Department.name, Attendance.status)
     )
@@ -190,9 +196,13 @@ async def dept_attendance(
 async def ot_by_dept(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
 ):
     """OT hours by department for current month."""
     today = date.today()
+    target_year = year if isinstance(year, int) else today.year
+    target_month = month if isinstance(month, int) else today.month
     from app.models.department import Department
 
     result = await db.execute(
@@ -202,8 +212,8 @@ async def ot_by_dept(
         )
         .join(Department, Attendance.department_id == Department.id)
         .where(
-            extract("year", Attendance.attendance_date) == today.year,
-            extract("month", Attendance.attendance_date) == today.month,
+            extract("year", Attendance.attendance_date) == target_year,
+            extract("month", Attendance.attendance_date) == target_month,
             Attendance.ot_minutes > 0,
         )
         .group_by(Department.name)

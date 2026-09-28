@@ -1,12 +1,17 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Settings as SettingsIcon, Save, Building, Clock, IndianRupee, Loader2 } from 'lucide-react'
+import { Save, Building, Clock, IndianRupee, Loader2 } from 'lucide-react'
 import api from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
+
+interface SettingItem {
+  key: string
+  value: string
+}
 
 export default function SettingsPage() {
   const [hospitalName, setHospitalName] = useState('SPT Hospital')
@@ -18,17 +23,17 @@ export default function SettingsPage() {
   const fetchSettings = async () => {
     try {
       const res = await api.get('/settings')
-      const general = res.data.settings?.GENERAL || []
-      const att = res.data.settings?.ATTENDANCE || []
-      const payroll = res.data.settings?.PAYROLL || []
+      const general = (res.data.settings?.GENERAL || []) as SettingItem[]
+      const att = (res.data.settings?.ATTENDANCE || []) as SettingItem[]
+      const payroll = (res.data.settings?.PAYROLL || []) as SettingItem[]
 
-      general.forEach((s: any) => {
+      general.forEach((s: SettingItem) => {
         if (s.key === 'hospital_name') setHospitalName(s.value)
       })
-      att.forEach((s: any) => {
+      att.forEach((s: SettingItem) => {
         if (s.key === 'attendance_grace_period') setGracePeriod(s.value)
       })
-      payroll.forEach((s: any) => {
+      payroll.forEach((s: SettingItem) => {
         if (s.key === 'lop_late_threshold_days') setLopThreshold(s.value)
         if (s.key === 'paid_leave_monthly_cap') setPaidLeaveCap(s.value)
       })
@@ -54,8 +59,9 @@ export default function SettingsPage() {
         },
       })
       toast.success('System settings updated successfully!')
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to save settings.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to save settings.'
+      toast.error(msg)
     } finally {
       setSaving(false)
     }

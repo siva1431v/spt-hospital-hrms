@@ -11,11 +11,21 @@ from app.parsers.pdf.summary_parser import MonthlySummaryReportParser
 from app.services.attendance_import import AttendanceImportService
 from app.models.attendance import MonthlyAttendanceAggregate, AttendanceImport
 
-SAMPLE_PDF_PATH = "/Users/siva/.gemini/antigravity/brain/244cd4c4-f36b-4a23-a79d-e862b35af353/.user_uploaded/media_1789837442252.pdf"
+# Repo-relative paths to sample summary PDF
+_FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "Monthly_Status_Report_Aug_1_to_24.pdf")
+_REPO_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Monthly_Status_Report_Aug_1_to_24.pdf")
+
+if os.path.exists(_FIXTURE_PATH):
+    SAMPLE_PDF_PATH = _FIXTURE_PATH
+elif os.path.exists(_REPO_PATH):
+    SAMPLE_PDF_PATH = _REPO_PATH
+else:
+    SAMPLE_PDF_PATH = None
 
 
 def test_summary_report_autodetect_and_parse():
-    assert os.path.exists(SAMPLE_PDF_PATH), f"Sample PDF not found at {SAMPLE_PDF_PATH}"
+    if not SAMPLE_PDF_PATH or not os.path.exists(SAMPLE_PDF_PATH):
+        pytest.skip(f"Sample PDF not found at {_FIXTURE_PATH} or {_REPO_PATH}")
 
     report = parse_attendance_pdf(SAMPLE_PDF_PATH)
     assert report.report_type == "Monthly Status Report (Summary Report)"
@@ -33,6 +43,8 @@ def test_summary_report_autodetect_and_parse():
 
 
 def test_summary_report_spot_checks():
+    if not SAMPLE_PDF_PATH or not os.path.exists(SAMPLE_PDF_PATH):
+        pytest.skip(f"Sample PDF not found at {_FIXTURE_PATH} or {_REPO_PATH}")
     report = parse_attendance_pdf(SAMPLE_PDF_PATH)
     agg_map = {a.employee_code: a for a in report.monthly_aggregates}
 
@@ -100,6 +112,8 @@ def test_summary_report_spot_checks():
 
 @pytest.mark.asyncio
 async def test_summary_report_import_service_preview_and_commit():
+    if not SAMPLE_PDF_PATH or not os.path.exists(SAMPLE_PDF_PATH):
+        pytest.skip(f"Sample PDF not found at {_FIXTURE_PATH} or {_REPO_PATH}")
     from app.core.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:

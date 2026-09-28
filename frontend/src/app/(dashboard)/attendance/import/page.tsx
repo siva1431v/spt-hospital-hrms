@@ -9,27 +9,91 @@ import {
   AlertTriangle,
   Loader2,
   ArrowRight,
-  RefreshCw,
-  Info,
 } from 'lucide-react'
 import api from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Employee, Department } from '@/types'
+
+interface PreviewRecord {
+  attendance_date?: string
+  employee_code?: string
+  employee_name?: string
+  department_name?: string
+  in_time?: string
+  out_time?: string
+  status?: string
+  is_unknown_employee?: boolean
+  is_unknown_department?: boolean
+  is_duplicate?: boolean
+  errors?: string[]
+}
+
+interface MonthlyAggregatePreview {
+  employee_code: string
+  employee_name: string
+  department_name: string
+  present_count: number
+  absent_count: number
+  late_by_days: number
+  total_work_duration?: string
+  total_ot?: string
+}
+
+interface ImportPreviewData {
+  session_token?: string
+  _temp_path?: string
+  report_type?: string
+  company?: string
+  company_name?: string
+  date_range_start?: string
+  date_range_end?: string
+  unknown_employee_codes?: string[]
+  unknown_departments?: string[]
+  unknown_department_names?: string[]
+  unmapped_shift_codes?: string[]
+  records?: PreviewRecord[]
+  monthly_aggregates?: MonthlyAggregatePreview[]
+  statistics?: {
+    total_records?: number
+    records_present?: number
+    records_absent?: number
+    records_incomplete?: number
+    records_overnight?: number
+    duplicates?: number
+    duplicate?: number
+    unknown_employees?: number
+    errors?: number
+    warnings?: number
+  }
+}
+
+interface ImportSummaryData {
+  imported_count?: number
+  total_imported?: number
+  skipped_count?: number
+  duplicates_skipped?: number
+  error_count?: number
+  total_errors?: number
+  imported?: number
+  skipped?: number
+  errors?: number
+}
 
 export default function ImportPdfWizardPage() {
   const router = useRouter()
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1)
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [previewData, setPreviewData] = useState<any | null>(null)
+  const [previewData, setPreviewData] = useState<ImportPreviewData | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(null)
 
   const [uploading, setUploading] = useState(false)
   const [committing, setCommitting] = useState(false)
   const [duplicateHandling, setDuplicateHandling] = useState<'SKIP' | 'OVERWRITE'>('SKIP')
-  const [importSummary, setImportSummary] = useState<any | null>(null)
+  const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null)
 
-  const [employees, setEmployees] = useState<any[]>([])
-  const [departments, setDepartments] = useState<any[]>([])
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
   const [employeeMappings, setEmployeeMappings] = useState<{ [code: string]: string }>({})
   const [departmentMappings, setDepartmentMappings] = useState<{ [name: string]: string }>({})
 
@@ -71,8 +135,9 @@ export default function ImportPdfWizardPage() {
       }
 
       setStep(3)
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to parse attendance PDF report.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || 'Failed to parse attendance PDF report.')
       setStep(1)
     } finally {
       setUploading(false)
@@ -97,8 +162,9 @@ export default function ImportPdfWizardPage() {
 
       setImportSummary(response.data)
       setStep(5)
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to commit attendance records.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || 'Failed to commit attendance records.')
       setStep(3)
     } finally {
       setCommitting(false)
@@ -311,7 +377,7 @@ export default function ImportPdfWizardPage() {
                           className="h-8 text-xs bg-white border border-slate-200 rounded px-2 mt-1 w-full"
                         >
                           <option value="">-- Choose Existing Department --</option>
-                          {departments.map((d: any) => (
+                          {departments.map((d: Department) => (
                             <option key={d.id} value={d.id}>
                               {d.name} ({d.code})
                             </option>
@@ -334,7 +400,7 @@ export default function ImportPdfWizardPage() {
                   </p>
                   <div className="grid gap-3 sm:grid-cols-2">
                     {previewData.unknown_employee_codes.map((code: string) => {
-                      const matchingRecord = previewData.records?.find((r: any) => r.employee_code === code)
+                      const matchingRecord = previewData.records?.find((r: PreviewRecord) => r.employee_code === code)
                       const pdfName = matchingRecord ? matchingRecord.employee_name : 'Unknown'
                       return (
                         <div key={code} className="flex flex-col gap-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
@@ -353,7 +419,7 @@ export default function ImportPdfWizardPage() {
                             className="h-8 text-xs bg-white border border-slate-200 rounded px-2 mt-1 w-full"
                           >
                             <option value="">-- Choose Existing Employee --</option>
-                            {employees.map((emp: any) => (
+                            {employees.map((emp: Employee) => (
                               <option key={emp.id} value={emp.id}>
                                 {emp.full_name} ({emp.employee_id})
                               </option>
@@ -386,7 +452,7 @@ export default function ImportPdfWizardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                  {previewData.records?.map((rec: any, idx: number) => {
+                  {previewData.records?.map((rec: PreviewRecord, idx: number) => {
                     const hasError = rec.is_unknown_employee || (rec.errors && rec.errors.length > 0)
                     const isDup = rec.is_duplicate
                     const isUnknownDept = rec.is_unknown_department
@@ -447,7 +513,7 @@ export default function ImportPdfWizardPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                      {previewData.monthly_aggregates.slice(0, 50).map((agg: any, idx: number) => (
+                      {previewData.monthly_aggregates.slice(0, 50).map((agg: MonthlyAggregatePreview, idx: number) => (
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="p-2.5 font-bold text-slate-900">{agg.employee_code}</td>
                           <td className="p-2.5 font-sans font-medium text-slate-800">{agg.employee_name}</td>

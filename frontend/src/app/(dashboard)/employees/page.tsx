@@ -49,37 +49,33 @@ export default function EmployeesPage() {
 
   // Single effect owning (debouncedSearch, selectedDept, statusFilter, refreshIndex, page) as a unified query key
   useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
+    let active = true
+    async function load() {
+      try {
+        const params: Record<string, string | number | boolean> = { page, page_size: pageSize }
+        if (debouncedSearch.trim()) params.search = debouncedSearch.trim()
+        if (selectedDept) params.department_id = selectedDept
+        if (statusFilter === 'active') params.is_active = true
+        else if (statusFilter === 'inactive') params.is_active = false
 
-    const params: any = { page, page_size: pageSize }
-    if (debouncedSearch.trim()) params.search = debouncedSearch.trim()
-    if (selectedDept) params.department_id = selectedDept
-    if (statusFilter === 'active') params.is_active = true
-    else if (statusFilter === 'inactive') params.is_active = false
-
-    api.get('/employees', { params, signal: controller.signal })
-      .then((empRes) => {
-        setEmployees(empRes.data.items || [])
-        setTotal(empRes.data.total || 0)
-      })
-      .catch((err) => {
-        // Discard aborted / superseded requests
-        if (err?.name === 'CanceledError' || err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') {
-          return
+        const empRes = await api.get('/employees', { params })
+        if (active) {
+          setEmployees(empRes.data.items || [])
+          setTotal(empRes.data.total || 0)
         }
+      } catch (err) {
         console.error('Failed to fetch employees', err)
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
+      } finally {
+        if (active) {
           setLoading(false)
         }
-      })
-
-    return () => {
-      controller.abort()
+      }
     }
-  }, [debouncedSearch, selectedDept, statusFilter, refreshIndex, page])
+    load()
+    return () => {
+      active = false
+    }
+  }, [debouncedSearch, selectedDept, statusFilter, refreshIndex, page, pageSize])
 
   const handleDeactivate = async (id: number) => {
     if (!confirm('Are you sure you want to deactivate this employee?')) return
@@ -135,8 +131,9 @@ export default function EmployeesPage() {
       setBulkSavingsOpen(false)
       setSelectedIds([])
       setRefreshIndex(prev => prev + 1)
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to bulk-update savings deduction.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to bulk-update savings deduction.'
+      toast.error(msg)
     } finally {
       setSubmittingBulk(false)
     }

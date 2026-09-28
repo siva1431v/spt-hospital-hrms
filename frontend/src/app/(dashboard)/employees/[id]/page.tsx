@@ -40,7 +40,7 @@ export default function EmployeeDetailPage() {
   const handleOpenTransaction = (type: 'DEPOSIT' | 'WITHDRAWAL' | 'SETTLEMENT') => {
     setTxType(type)
     if (type === 'SETTLEMENT') {
-      const bal = (employee as any)?.accumulated_security_fund || 0
+      const bal = employee?.accumulated_security_fund || 0
       setAmount(bal > 0 ? String(bal) : '')
       setNotes('Full resignation settlement payout')
     } else {
@@ -57,7 +57,7 @@ export default function EmployeeDetailPage() {
       toast.error('Please enter a valid amount')
       return
     }
-    const currentBal = (employee as any)?.accumulated_security_fund || 0
+    const currentBal = employee?.accumulated_security_fund || 0
     if ((txType === 'WITHDRAWAL' || txType === 'SETTLEMENT') && val > currentBal) {
       toast.error(`Insufficient balance. Current accumulated fund is ₹${currentBal.toLocaleString('en-IN')}`)
       return
@@ -75,8 +75,9 @@ export default function EmployeeDetailPage() {
       setAmount('')
       setNotes('')
       fetchEmployee()
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to record transaction')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to record transaction'
+      toast.error(msg)
     } finally {
       setSubmitting(false)
     }
@@ -98,7 +99,7 @@ export default function EmployeeDetailPage() {
     )
   }
 
-  const accumulatedBal = (employee as any)?.accumulated_security_fund || 0
+  const accumulatedBal = employee?.accumulated_security_fund || 0
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">

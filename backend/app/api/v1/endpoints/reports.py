@@ -4,6 +4,7 @@ Generates attendance, payroll, and HR reports in JSON, Excel, and PDF.
 """
 import io
 import logging
+import calendar
 from datetime import date
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, Query, Response
@@ -42,12 +43,21 @@ async def attendance_report(
     current_user: CurrentUser,
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
     department_id: Optional[int] = Query(None),
     employee_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None),
     format: str = Query("json", pattern="^(json|excel)$"),
 ):
     """Attendance report with date range, department, and employee filters."""
+    if year is not None and month is not None:
+        last_day = calendar.monthrange(year, month)[1]
+        if date_from is None:
+            date_from = date(year, month, 1)
+        if date_to is None:
+            date_to = date(year, month, last_day)
+
     query = (
         select(Attendance)
         .options(
@@ -127,10 +137,19 @@ async def missing_punch_report(
     current_user: CurrentUser,
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
     department_id: Optional[int] = Query(None),
     format: str = Query("json", pattern="^(json|excel)$"),
 ):
     """Report of all 'Present (No OutPunch)' records."""
+    if year is not None and month is not None:
+        last_day = calendar.monthrange(year, month)[1]
+        if date_from is None:
+            date_from = date(year, month, 1)
+        if date_to is None:
+            date_to = date(year, month, last_day)
+
     query = (
         select(Attendance)
         .options(selectinload(Attendance.employee), selectinload(Attendance.department))
@@ -192,10 +211,19 @@ async def overtime_report(
     current_user: CurrentUser,
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
     department_id: Optional[int] = Query(None),
     format: str = Query("json", pattern="^(json|excel)$"),
 ):
     """OT report with employee, department, date, hours."""
+    if year is not None and month is not None:
+        last_day = calendar.monthrange(year, month)[1]
+        if date_from is None:
+            date_from = date(year, month, 1)
+        if date_to is None:
+            date_to = date(year, month, last_day)
+
     query = (
         select(Attendance)
         .options(selectinload(Attendance.employee), selectinload(Attendance.department))
@@ -254,8 +282,8 @@ async def overtime_report(
 async def salary_register(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN))],
-    year: Optional[int] = Query(None),
-    month: Optional[int] = Query(None),
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
     department_id: Optional[int] = Query(None),
     format: str = Query("json", pattern="^(json|excel)$"),
 ):
@@ -269,9 +297,9 @@ async def salary_register(
         )
         .order_by(PayrollRecord.employee_id)
     )
-    if year:
+    if year and isinstance(year, int):
         query = query.where(PayrollPeriod.year == year)
-    if month:
+    if month and isinstance(month, int):
         query = query.where(PayrollPeriod.month == month)
 
     result = await db.execute(query)
@@ -330,8 +358,8 @@ async def salary_register(
 async def lateness_lop_report(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN))],
-    year: Optional[int] = Query(None),
-    month: Optional[int] = Query(None),
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
     department_id: Optional[int] = Query(None),
     format: str = Query("json", pattern="^(json|excel)$"),
 ):
@@ -340,12 +368,10 @@ async def lateness_lop_report(
     from app.models.attendance import MonthlyAttendanceAggregate
 
     today = date.today()
-    if not year:
-        year = today.year
-    if not month:
-        month = today.month
+    target_year = year if isinstance(year, int) else today.year
+    target_month = month if isinstance(month, int) else today.month
 
-    days_in_month = calendar.monthrange(year, month)[1]
+    days_in_month = calendar.monthrange(target_year, target_month)[1]
 
     # Query active employees
     emp_query = select(Employee).options(selectinload(Employee.department)).where(Employee.is_active == True)
@@ -361,8 +387,8 @@ async def lateness_lop_report(
         agg_res = await db.execute(
             select(MonthlyAttendanceAggregate).where(
                 MonthlyAttendanceAggregate.employee_id == emp.id,
-                MonthlyAttendanceAggregate.year == year,
-                MonthlyAttendanceAggregate.month == month,
+                MonthlyAttendanceAggregate.year == target_year,
+                MonthlyAttendanceAggregate.month == target_month,
             )
         )
         agg = agg_res.scalar_one_or_none()
@@ -375,8 +401,8 @@ async def lateness_lop_report(
             att_res = await db.execute(
                 select(Attendance).where(
                     Attendance.employee_id == emp.id,
-                    extract("year", Attendance.attendance_date) == year,
-                    extract("month", Attendance.attendance_date) == month,
+                    extract("year", Attendance.attendance_date) == target_year,
+                    extract("month", Attendance.attendance_date) == target_month,
                     Attendance.is_late == True,
                 )
             )

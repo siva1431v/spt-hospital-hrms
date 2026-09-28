@@ -17,7 +17,7 @@ from app.utils.shift_utils import evaluate_shift_punch
 from app.core.database import AsyncSessionLocal
 from app.models.audit import SystemSetting
 
-BASE_URL = "http://localhost:8000"
+from app.main import app
 
 
 def test_shift_punch_5m_grace_evaluation():
@@ -92,7 +92,7 @@ def test_shift_punch_5m_grace_evaluation():
 
 @pytest.mark.asyncio
 async def test_grace_period_api_endpoints():
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # Login
         login_res = await client.post("/api/v1/auth/login", json={"username": "admin", "password": "Admin@123"})
         assert login_res.status_code == 200

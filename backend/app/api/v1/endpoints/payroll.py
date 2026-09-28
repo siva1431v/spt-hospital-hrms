@@ -68,8 +68,8 @@ async def create_payroll_period(
 async def lookup_payroll_period(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
-    year: int = Query(...),
-    month: int = Query(...),
+    year: int = Query(..., ge=2020, le=2050),
+    month: int = Query(..., ge=1, le=12),
 ):
     """Lookup a payroll period by year and month."""
     result = await db.execute(
@@ -94,13 +94,13 @@ async def lookup_payroll_period(
 async def list_payroll_periods(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
-    year: Optional[int] = Query(None),
-    month: Optional[int] = Query(None),
+    year: Annotated[Optional[int], Query(ge=2020, le=2050)] = None,
+    month: Annotated[Optional[int], Query(ge=1, le=12)] = None,
 ):
     query = select(PayrollPeriod)
-    if year is not None:
+    if year is not None and isinstance(year, int):
         query = query.where(PayrollPeriod.year == year)
-    if month is not None:
+    if month is not None and isinstance(month, int):
         query = query.where(PayrollPeriod.month == month)
     query = query.order_by(PayrollPeriod.year.desc(), PayrollPeriod.month.desc())
     result = await db.execute(query)
@@ -126,8 +126,8 @@ async def calculate_payroll_by_month(
     """
     year = data.get("year")
     month = data.get("month")
-    if not year or not month:
-        raise HTTPException(status_code=400, detail="Year and month are required.")
+    if not year or not month or not (1 <= month <= 12) or not (2020 <= year <= 2050):
+        raise HTTPException(status_code=400, detail="Valid year (2020-2050) and month (1-12) are required.")
 
     import calendar
     result = await db.execute(
@@ -316,7 +316,10 @@ async def update_payroll_record(
 
     result = await db.execute(
         select(PayrollRecord)
-        .options(selectinload(PayrollRecord.period), selectinload(PayrollRecord.employee))
+        .options(
+            selectinload(PayrollRecord.period),
+            selectinload(PayrollRecord.employee).selectinload(Employee.shift),
+        )
         .where(PayrollRecord.id == record_id)
     )
     rec = result.scalar_one_or_none()
@@ -665,7 +668,10 @@ async def get_record_lateness_breakdown(
     result = await db.execute(
         select(PayrollRecord)
         .where(PayrollRecord.id == record_id)
-        .options(selectinload(PayrollRecord.period), selectinload(PayrollRecord.employee))
+        .options(
+            selectinload(PayrollRecord.period),
+            selectinload(PayrollRecord.employee).selectinload(Employee.shift),
+        )
     )
     rec = result.scalar_one_or_none()
     if not rec:

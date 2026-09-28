@@ -60,38 +60,40 @@ export default function DailyAttendancePage() {
   const [selectedLeaveType, setSelectedLeaveType] = useState<string>('CL')
   const [leaveReason, setLeaveReason] = useState<string>('')
   const [submittingLeave, setSubmittingLeave] = useState(false)
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const refreshAttendance = () => setRefreshTrigger((n) => n + 1)
 
-  const fetchAttendance = async () => {
-    setLoading(true)
-    try {
-      const params: any = { page, page_size: pageSize }
-      if (selectedDate) params.attendance_date = selectedDate
-      if (selectedDept) params.department_id = selectedDept
-      if (statusFilter) params.status_filter = statusFilter
-      if (debouncedSearch) params.search = debouncedSearch
+  useEffect(() => {
+    let active = true
+    async function load() {
+      try {
+        const params: Record<string, string | number> = { page, page_size: pageSize }
+        if (selectedDate) params.attendance_date = selectedDate
+        if (selectedDept) params.department_id = selectedDept
+        if (statusFilter) params.status_filter = statusFilter
+        if (debouncedSearch) params.search = debouncedSearch
 
-      const [attRes, deptRes] = await Promise.all([
-        api.get('/attendance', { params }),
-        departments.length === 0 ? api.get('/departments') : Promise.resolve({ data: { items: departments } }),
-      ])
-      setAttendance(attRes.data.items || [])
-      setTotal(attRes.data.total || 0)
-      if (deptRes.data.items) setDepartments(deptRes.data.items)
-      setSelectedIds([])
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
+        const [attRes, deptRes] = await Promise.all([
+          api.get('/attendance', { params }),
+          departments.length === 0 ? api.get('/departments') : Promise.resolve({ data: { items: departments } }),
+        ])
+        if (active) {
+          setAttendance(attRes.data.items || [])
+          setTotal(attRes.data.total || 0)
+          if (deptRes.data.items) setDepartments(deptRes.data.items)
+          setSelectedIds([])
+        }
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
+      }
     }
-  }
-
-  useEffect(() => {
-    fetchAttendance()
-  }, [selectedDate, selectedDept, statusFilter, debouncedSearch, page])
-
-  useEffect(() => {
-    setPage(1)
-  }, [selectedDate, selectedDept, statusFilter, debouncedSearch])
+    load()
+    return () => {
+      active = false
+    }
+  }, [selectedDate, selectedDept, statusFilter, debouncedSearch, page, pageSize, refreshTrigger, departments.length])
 
   const toggleSelectAll = () => {
     if (selectedIds.length === attendance.length) {
@@ -157,9 +159,10 @@ export default function DailyAttendancePage() {
         reason,
       })
       setSelectedRecord(null)
-      fetchAttendance()
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to apply manual correction.')
+      refreshAttendance()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to apply manual correction.'
+      alert(msg)
     } finally {
       setSubmittingCorrection(false)
     }
@@ -203,9 +206,10 @@ export default function DailyAttendancePage() {
         })
       }
       setLeaveModalOpen(false)
-      fetchAttendance()
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to reclassify leave.')
+      refreshAttendance()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to reclassify leave.'
+      alert(msg)
     } finally {
       setSubmittingLeave(false)
     }
@@ -346,11 +350,11 @@ export default function DailyAttendancePage() {
                         />
                       </td>
                       <td className="p-3.5 font-mono text-slate-600">{rec.attendance_date}</td>
-                      <td className="p-3.5 font-mono text-slate-900 font-bold">{rec.employee_code || (rec as any).biometric_code}</td>
+                      <td className="p-3.5 font-mono text-slate-900 font-bold">{rec.employee_code || rec.biometric_code}</td>
                       <td className="p-3.5 font-semibold text-slate-900">{rec.employee_name || 'Staff'}</td>
-                      <td className="p-3.5 text-slate-600">{rec.department_name || (rec as any).department || '—'}</td>
-                      <td className="p-3.5 font-mono text-emerald-700">{rec.source_in_time || (rec as any).in_time || '—'}</td>
-                      <td className="p-3.5 font-mono text-teal-700">{rec.source_out_time || (rec as any).out_time || '—'}</td>
+                      <td className="p-3.5 text-slate-600">{rec.department_name || rec.department || '—'}</td>
+                      <td className="p-3.5 font-mono text-emerald-700">{rec.source_in_time || rec.in_time || '—'}</td>
+                      <td className="p-3.5 font-mono text-teal-700">{rec.source_out_time || rec.out_time || '—'}</td>
                       <td className="p-3.5 font-mono">{rec.work_minutes ? (rec.work_minutes / 60).toFixed(1) : '0.0'}</td>
                       <td className="p-3.5 font-mono text-purple-700 font-bold">{rec.ot_minutes ? (rec.ot_minutes / 60).toFixed(1) : '0.0'}</td>
                       <td className="p-3.5">

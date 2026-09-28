@@ -35,29 +35,34 @@ export default function MonthlyAttendanceSummaryPage() {
   const [year, setYear] = useState(2026)
   const [month, setMonth] = useState(8)
   const [search, setSearch] = useState('')
-
-  const fetchMonthlySummary = async () => {
-    setLoading(true)
-    try {
-      const res = await api.get('/attendance/monthly', {
-        params: { year, month, search: search || undefined, sort_by: 'lop_days', sort_order: 'desc' },
-      })
-      setSummaries(res.data.items || [])
-      if (res.data.grace_period) setGracePeriod(res.data.grace_period)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
   useEffect(() => {
-    fetchMonthlySummary()
-  }, [year, month])
+    let active = true
+    async function load() {
+      try {
+        const res = await api.get('/attendance/monthly', {
+          params: { year, month, search: search || undefined, sort_by: 'lop_days', sort_order: 'desc' },
+        })
+        if (active) {
+          setSummaries(res.data.items || [])
+          if (res.data.grace_period) setGracePeriod(res.data.grace_period)
+        }
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [year, month, refreshTrigger])
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    fetchMonthlySummary()
+    setRefreshTrigger((n) => n + 1)
   }
 
   return (

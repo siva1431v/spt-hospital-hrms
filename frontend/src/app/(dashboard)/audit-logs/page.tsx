@@ -1,11 +1,21 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Shield, Search, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import api from '@/lib/api'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+
+interface AuditLogEntry {
+  id: number
+  created_at: string
+  user_name?: string
+  action: string
+  entity_type: string
+  entity_id: number | string
+  description: string
+}
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value)
@@ -19,7 +29,7 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export default function AuditLogsPage() {
-  const [logs, setLogs] = useState<any[]>([])
+  const [logs, setLogs] = useState<AuditLogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [actionFilter, setActionFilter] = useState('')
   const debouncedAction = useDebounce(actionFilter, 300)
@@ -32,36 +42,35 @@ export default function AuditLogsPage() {
   const pageSize = 50
   const [total, setTotal] = useState(0)
 
-  const fetchLogs = async (currentPage: number) => {
-    setLoading(true)
-    try {
-      const params: any = {
-        page: currentPage,
-        page_size: pageSize,
+  useEffect(() => {
+    let active = true
+    async function load() {
+      try {
+        const params: Record<string, string | number> = {
+          page,
+          page_size: pageSize,
+        }
+        if (debouncedAction) params.action = debouncedAction
+        if (entityType) params.entity_type = entityType
+        if (dateFrom) params.date_from = dateFrom
+        if (dateTo) params.date_to = dateTo
+
+        const res = await api.get('/audit-logs', { params })
+        if (active) {
+          setLogs(res.data.items || [])
+          setTotal(res.data.total || 0)
+        }
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
       }
-      if (debouncedAction) params.action = debouncedAction
-      if (entityType) params.entity_type = entityType
-      if (dateFrom) params.date_from = dateFrom
-      if (dateTo) params.date_to = dateTo
-
-      const res = await api.get('/audit-logs', { params })
-      setLogs(res.data.items || [])
-      setTotal(res.data.total || 0)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
     }
-  }
-
-  useEffect(() => {
-    setPage(1)
-    fetchLogs(1)
-  }, [debouncedAction, entityType, dateFrom, dateTo])
-  
-  useEffect(() => {
-    fetchLogs(page)
-  }, [page])
+    load()
+    return () => {
+      active = false
+    }
+  }, [debouncedAction, entityType, dateFrom, dateTo, page, pageSize])
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -79,7 +88,10 @@ export default function AuditLogsPage() {
           <Input
             placeholder="Filter by action (e.g. IMPORT)..."
             value={actionFilter}
-            onChange={(e) => setActionFilter(e.target.value)}
+            onChange={(e) => {
+              setActionFilter(e.target.value)
+              setPage(1)
+            }}
             className="pl-9 text-xs h-10 border-slate-200"
           />
         </div>
@@ -88,7 +100,10 @@ export default function AuditLogsPage() {
           <Label className="text-xs font-semibold mb-1.5 block">Entity Type</Label>
           <select
             value={entityType}
-            onChange={(e) => setEntityType(e.target.value)}
+            onChange={(e) => {
+              setEntityType(e.target.value)
+              setPage(1)
+            }}
             className="w-full text-xs h-10 rounded-md border border-slate-200 bg-white px-3 focus:outline-none focus:ring-2 focus:ring-teal-500"
           >
             <option value="">All Entities</option>
@@ -105,7 +120,10 @@ export default function AuditLogsPage() {
           <Input
             type="date"
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(e) => {
+              setDateFrom(e.target.value)
+              setPage(1)
+            }}
             className="text-xs h-10"
           />
         </div>
@@ -115,7 +133,10 @@ export default function AuditLogsPage() {
           <Input
             type="date"
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(e) => {
+              setDateTo(e.target.value)
+              setPage(1)
+            }}
             className="text-xs h-10"
           />
         </div>

@@ -22,10 +22,21 @@ function SalarySlipsContent() {
   const initialYear = Number(searchParams.get('year')) || 2026
   const initialMonth = Number(searchParams.get('month')) || 8
 
+interface PayrollPeriodItem {
+  id: number
+  period_name: string
+  year: number
+  month: number
+  status: string
+  total_employees?: number
+  total_gross_amount?: number
+  total_net_amount?: number
+}
+
   const [year, setYear] = useState<number>(initialYear)
   const [month, setMonth] = useState<number>(initialMonth)
 
-  const [currentPeriod, setCurrentPeriod] = useState<any | null>(null)
+  const [currentPeriod, setCurrentPeriod] = useState<PayrollPeriodItem | null>(null)
   const [records, setRecords] = useState<PayrollRecord[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -46,37 +57,46 @@ function SalarySlipsContent() {
     router.replace(`/payroll/salary-slips?year=${year}&month=${newMonth}`)
   }
 
-  const fetchPeriodAndRecords = async () => {
-    setLoading(true)
-    try {
-      const lookupRes = await api.get('/payroll/periods/lookup', {
-        params: { year, month },
-      })
-      const period = lookupRes.data.period
-      setCurrentPeriod(period)
-
-      if (period) {
-        const res = await api.get(`/payroll/periods/${period.id}/records`, {
-          params: { page_size: 200 },
-        })
-        setRecords(res.data.items || [])
-        setTotalCount(res.data.total || (res.data.items || []).length)
-      } else {
-        setRecords([])
-        setTotalCount(0)
-      }
-    } catch (err) {
-      console.error(err)
-      setCurrentPeriod(null)
-      setRecords([])
-      setTotalCount(0)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
-    fetchPeriodAndRecords()
+    let active = true
+    async function load() {
+      try {
+        const lookupRes = await api.get('/payroll/periods/lookup', {
+          params: { year, month },
+        })
+        if (!active) return
+        const period = lookupRes.data.period
+        setCurrentPeriod(period)
+
+        if (period) {
+          const res = await api.get(`/payroll/periods/${period.id}/records`, {
+            params: { page_size: 200 },
+          })
+          if (active) {
+            setRecords(res.data.items || [])
+            setTotalCount(res.data.total || (res.data.items || []).length)
+          }
+        } else {
+          setRecords([])
+          setTotalCount(0)
+        }
+      } catch (err) {
+        console.error(err)
+        if (active) {
+          setCurrentPeriod(null)
+          setRecords([])
+          setTotalCount(0)
+        }
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
   }, [year, month])
 
   const handleDownloadSlip = async (recordId: number) => {
@@ -196,13 +216,13 @@ function SalarySlipsContent() {
               <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
                 {filteredRecords.map((rec) => (
                   <tr key={rec.id} className="hover:bg-slate-50/80">
-                    <td className="p-3.5 pl-5 font-mono text-slate-900 font-bold">{rec.employee_code || (rec as any).biometric_code || rec.employee_id}</td>
+                    <td className="p-3.5 pl-5 font-mono text-slate-900 font-bold">{rec.employee_code || rec.biometric_code || rec.employee_id}</td>
                     <td className="p-3.5 font-semibold text-slate-900">{rec.employee_name || 'Staff'}</td>
-                    <td className="p-3.5 text-slate-600">{rec.department || (rec as any).department_name || '—'}</td>
+                    <td className="p-3.5 text-slate-600">{rec.department || rec.department_name || '—'}</td>
                     <td className="p-3.5 font-mono font-medium">₹ {(Number(rec.basic_salary) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="p-3.5 font-mono font-semibold text-slate-900">₹ {(Number((rec as any).gross_salary ?? rec.basic_salary) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="p-3.5 font-mono text-rose-700 font-medium">₹ {(Number((rec as any).total_deductions ?? (rec as any).deductions) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="p-3.5 font-mono font-extrabold text-teal-700 text-sm">₹ {(Number(rec.net_salary ?? (rec as any).total_salary) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="p-3.5 font-mono font-semibold text-slate-900">₹ {(Number(rec.gross_salary ?? rec.basic_salary) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="p-3.5 font-mono text-rose-700 font-medium">₹ {(Number(rec.total_deductions ?? rec.deductions) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="p-3.5 font-mono font-extrabold text-teal-700 text-sm">₹ {(Number(rec.net_salary ?? rec.total_salary) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="p-3.5">
                       {rec.status === 'FINALIZED' ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">FINALIZED</span>

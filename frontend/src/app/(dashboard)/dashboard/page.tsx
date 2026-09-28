@@ -20,37 +20,55 @@ import { StatCard } from '@/components/ui/stat-card'
 import { DashboardStats } from '@/types'
 import Link from 'next/link'
 
+interface ActivityItem {
+  id: number | string
+  description: string
+  user_name?: string
+  entity_type?: string
+  created_at: string
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [trendData, setTrendData] = useState<any[]>([])
-  const [deptData, setDeptData] = useState<any[]>([])
-  const [activities, setActivities] = useState<any[]>([])
+  const [, setTrendData] = useState<Record<string, unknown>[]>([])
+  const [, setDeptData] = useState<Record<string, unknown>[]>([])
+  const [activities, setActivities] = useState<ActivityItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
-  const fetchDashboardData = async () => {
+  const refresh = () => {
     setLoading(true)
-    try {
-      const [statsRes, trendRes, deptRes, activityRes] = await Promise.allSettled([
-        api.get('/dashboard/stats'),
-        api.get('/dashboard/attendance-trend'),
-        api.get('/dashboard/dept-attendance'),
-        api.get('/dashboard/recent-activity'),
-      ])
-
-      if (statsRes.status === 'fulfilled') setStats(statsRes.value.data)
-      if (trendRes.status === 'fulfilled') setTrendData(trendRes.value.data.data || [])
-      if (deptRes.status === 'fulfilled') setDeptData(deptRes.value.data.data || [])
-      if (activityRes.status === 'fulfilled') setActivities(activityRes.value.data.items || [])
-    } catch (err) {
-      console.error('Failed to fetch dashboard stats', err)
-    } finally {
-      setLoading(false)
-    }
+    setRefreshTrigger((n) => n + 1)
   }
 
   useEffect(() => {
-    fetchDashboardData()
-  }, [])
+    let active = true
+    async function load() {
+      try {
+        const [statsRes, trendRes, deptRes, activityRes] = await Promise.allSettled([
+          api.get('/dashboard/stats'),
+          api.get('/dashboard/attendance-trend'),
+          api.get('/dashboard/dept-attendance'),
+          api.get('/dashboard/recent-activity'),
+        ])
+
+        if (active) {
+          if (statsRes.status === 'fulfilled') setStats(statsRes.value.data)
+          if (trendRes.status === 'fulfilled') setTrendData(trendRes.value.data.data || [])
+          if (deptRes.status === 'fulfilled') setDeptData(deptRes.value.data.data || [])
+          if (activityRes.status === 'fulfilled') setActivities(activityRes.value.data.items || [])
+        }
+      } catch (err) {
+        console.error('Failed to fetch dashboard stats', err)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [refreshTrigger])
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
@@ -63,7 +81,7 @@ export default function DashboardPage() {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={fetchDashboardData}
+            onClick={refresh}
             className="p-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 shadow-2xs"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -100,28 +118,28 @@ export default function DashboardPage() {
           title="Absent Today"
           value={stats?.absent_today ?? '—'}
           icon={<UserX className="w-5 h-5 text-rose-700" />}
-          subtitle="Not Reported"
+          subtitle="Unexcused Absence"
           variant="rose"
         />
         <StatCard
-          title="Missing Out-Punch"
+          title="No Out Punch"
           value={stats?.incomplete_today ?? '—'}
           icon={<AlertCircle className="w-5 h-5 text-amber-700" />}
-          subtitle="Incomplete Punch"
+          subtitle="Missing Punch Out"
           variant="amber"
         />
         <StatCard
-          title="Late Arrival Today"
+          title="Late Arrivals"
           value={stats?.late_today ?? '—'}
           icon={<Clock className="w-5 h-5 text-amber-700" />}
-          subtitle="Past Grace Period"
+          subtitle="Exceeded Grace Period"
           variant="amber"
         />
         <StatCard
-          title="On Leave Today"
+          title="On Leave"
           value={stats?.on_leave_today ?? '—'}
           icon={<CalendarOff className="w-5 h-5 text-blue-700" />}
-          subtitle="Approved Leave"
+          subtitle="Approved Leave Days"
           variant="blue"
         />
         <StatCard

@@ -12,6 +12,81 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 
 const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
+interface PayrollPeriodItem {
+  id: number
+  period_name: string
+  year: number
+  month: number
+  status: string
+  total_employees?: number
+  total_gross_amount?: number
+  total_net_amount?: number
+}
+
+interface PayrollRecordItem {
+  id: number
+  employee_id: number
+  employee_name?: string
+  employee_code?: string
+  biometric_code?: string
+  department?: string
+  total_working_days: number
+  present_days: number
+  half_days?: number
+  leave_days?: number
+  off_duty_days?: number
+  payable_days?: number
+  salary_part?: number
+  absent_days: number
+  paid_leave_days?: number
+  loss_of_pay_days?: number
+  lop_days?: number
+  lop_deduction?: number
+  security_fund_deduction?: number
+  collection?: number
+  ot_hours?: number
+  basic_salary: number
+  ot_amount?: number
+  gross_salary?: number
+  total_deductions?: number
+  net_salary?: number
+  total_salary?: number
+  status: string
+  salary_verified?: boolean
+  salary_source?: string
+  is_manual_override?: boolean
+}
+
+interface UnverifiedEmployee {
+  id?: number
+  employee_id: string
+  biometric_code?: string
+  name: string
+  current_salary?: number
+  basic_salary?: number
+}
+
+interface LateArrivalItem {
+  date: string
+  in_time: string
+  shift: string
+  late_minutes: number
+  excess_minutes: number
+}
+
+interface LatenessBreakdownData {
+  employee_name?: string
+  month?: number
+  year?: number
+  late_count?: number
+  qualifying_late_days?: number
+  grace_minutes?: number
+  lop_days?: number
+  per_day_salary?: number
+  lop_deduction?: number
+  late_arrivals?: LateArrivalItem[]
+}
+
 function PayrollContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -26,24 +101,24 @@ function PayrollContent() {
   const [year, setYear] = useState<number>(initialYear)
   const [month, setMonth] = useState<number>(initialMonth)
 
-  const [currentPeriod, setCurrentPeriod] = useState<any | null>(null)
-  const [records, setRecords] = useState<any[]>([])
+  const [currentPeriod, setCurrentPeriod] = useState<PayrollPeriodItem | null>(null)
+  const [records, setRecords] = useState<PayrollRecordItem[]>([])
   const [totalStaff, setTotalStaff] = useState<number>(0)
   const [loading, setLoading] = useState(false)
   const [calculating, setCalculating] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
 
   // Unverified salaries block modal state
-  const [unverifiedEmployees, setUnverifiedEmployees] = useState<any[]>([])
+  const [unverifiedEmployees, setUnverifiedEmployees] = useState<UnverifiedEmployee[]>([])
   const [showUnverifiedModal, setShowUnverifiedModal] = useState(false)
 
   // Lateness breakdown modal state
-  const [breakdownRecord, setBreakdownRecord] = useState<any | null>(null)
+  const [breakdownRecord, setBreakdownRecord] = useState<PayrollRecordItem | null>(null)
   const [breakdownLoading, setBreakdownLoading] = useState(false)
-  const [breakdownData, setBreakdownData] = useState<any | null>(null)
+  const [breakdownData, setBreakdownData] = useState<LatenessBreakdownData | null>(null)
 
   // Edit dialog state for manual calculator input override
-  const [editingRecord, setEditingRecord] = useState<any | null>(null)
+  const [editingRecord, setEditingRecord] = useState<PayrollRecordItem | null>(null)
   const [editPresent, setEditPresent] = useState<number>(0)
   const [editHalf, setEditHalf] = useState<number>(0)
   const [editLeave, setEditLeave] = useState<number>(0)
@@ -51,6 +126,12 @@ function PayrollContent() {
   const [editLOP, setEditLOP] = useState<number>(0)
   const [editCollection, setEditCollection] = useState<number>(0)
   const [savingEdit, setSavingEdit] = useState(false)
+
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const refresh = () => {
+    setLoading(true)
+    setRefreshTrigger((n) => n + 1)
+  }
 
   const handleYearChange = (newYear: number) => {
     let newMonth = month
@@ -67,40 +148,49 @@ function PayrollContent() {
     router.replace(`/payroll?year=${year}&month=${newMonth}`)
   }
 
-  const fetchPeriodAndRecords = async () => {
-    setLoading(true)
-    try {
-      const lookupRes = await api.get('/payroll/periods/lookup', {
-        params: { year, month },
-      })
-      const period = lookupRes.data.period
-      setCurrentPeriod(period)
-
-      if (period) {
-        const recRes = await api.get(`/payroll/periods/${period.id}/records`, {
-          params: { page_size: 200 },
-        })
-        setRecords(recRes.data.items || [])
-        setTotalStaff(recRes.data.total || (recRes.data.items || []).length)
-      } else {
-        setRecords([])
-        setTotalStaff(0)
-      }
-    } catch (err) {
-      console.error(err)
-      setCurrentPeriod(null)
-      setRecords([])
-      setTotalStaff(0)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
-    fetchPeriodAndRecords()
-  }, [year, month])
+    let active = true
+    async function load() {
+      try {
+        const lookupRes = await api.get('/payroll/periods/lookup', {
+          params: { year, month },
+        })
+        if (!active) return
+        const period = lookupRes.data.period
+        setCurrentPeriod(period)
 
-  const openLatenessBreakdown = async (rec: any) => {
+        if (period) {
+          const recRes = await api.get(`/payroll/periods/${period.id}/records`, {
+            params: { page_size: 200 },
+          })
+          if (active) {
+            setRecords(recRes.data.items || [])
+            setTotalStaff(recRes.data.total || (recRes.data.items || []).length)
+          }
+        } else {
+          setRecords([])
+          setTotalStaff(0)
+        }
+      } catch (err) {
+        console.error(err)
+        if (active) {
+          setCurrentPeriod(null)
+          setRecords([])
+          setTotalStaff(0)
+        }
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [year, month, refreshTrigger])
+
+  const openLatenessBreakdown = async (rec: PayrollRecordItem) => {
     setBreakdownRecord(rec)
     setBreakdownLoading(true)
     try {
@@ -126,8 +216,9 @@ function PayrollContent() {
         setRecords(recRes.data.items || [])
         setTotalStaff(recRes.data.total || (recRes.data.items || []).length)
       }
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to calculate payroll.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to calculate payroll.'
+      alert(msg)
     } finally {
       setCalculating(false)
     }
@@ -139,9 +230,10 @@ function PayrollContent() {
     setFinalizing(true)
     try {
       await api.post(`/payroll/periods/${currentPeriod.id}/finalize`)
-      fetchPeriodAndRecords()
-    } catch (err: any) {
-      const detail = err.response?.data?.detail
+      refresh()
+    } catch (err: unknown) {
+      const resp = (err as { response?: { data?: { detail?: { unverified_employees?: UnverifiedEmployee[]; message?: string } | string } } })?.response
+      const detail = resp?.data?.detail
       if (detail && typeof detail === 'object' && Array.isArray(detail.unverified_employees)) {
         setUnverifiedEmployees(detail.unverified_employees)
         setShowUnverifiedModal(true)
@@ -159,9 +251,10 @@ function PayrollContent() {
     if (!confirm('Are you sure you want to reopen this finalized payroll period?')) return
     try {
       await api.post(`/payroll/periods/${currentPeriod.id}/reopen`)
-      fetchPeriodAndRecords()
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to reopen period.')
+      refresh()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to reopen period.'
+      alert(msg)
     }
   }
 
@@ -182,7 +275,7 @@ function PayrollContent() {
     }
   }
 
-  const openEditModal = (rec: any) => {
+  const openEditModal = (rec: PayrollRecordItem) => {
     setEditingRecord(rec)
     setEditPresent(rec.present_days || 0)
     setEditHalf(rec.half_days || 0)
@@ -204,10 +297,11 @@ function PayrollContent() {
         loss_of_pay_days: editLOP,
         collection: editCollection,
       })
-      await fetchPeriodAndRecords()
+      refresh()
       setEditingRecord(null)
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to update payroll record.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to update payroll record.'
+      alert(msg)
     } finally {
       setSavingEdit(false)
     }
@@ -220,10 +314,11 @@ function PayrollContent() {
       await api.put(`/payroll/records/${editingRecord.id}`, {
         is_manual_override: false,
       })
-      await fetchPeriodAndRecords()
+      refresh()
       setEditingRecord(null)
-    } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to reset manual override.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to reset manual override.'
+      alert(msg)
     } finally {
       setSavingEdit(false)
     }
@@ -442,7 +537,7 @@ function PayrollContent() {
                         {fundDed > 0 ? `-₹ ${fundDed.toLocaleString('en-IN')}` : '—'}
                       </td>
                       <td className="p-3 text-right font-mono font-semibold text-emerald-700">
-                        {rec.collection > 0 ? `+₹ ${rec.collection?.toLocaleString('en-IN')}` : '₹ 0'}
+                        {(rec.collection ?? 0) > 0 ? `+₹ ${rec.collection?.toLocaleString('en-IN')}` : '₹ 0'}
                       </td>
                       <td className="p-3 text-right font-mono font-extrabold bg-teal-50/40 text-teal-700 text-sm">
                         ₹ {(rec.net_salary ?? rec.total_salary)?.toLocaleString('en-IN')}
@@ -536,7 +631,7 @@ function PayrollContent() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
-                    {breakdownData.late_arrivals?.map((la: any, i: number) => (
+                    {breakdownData.late_arrivals?.map((la: LateArrivalItem, i: number) => (
                       <tr key={i} className="hover:bg-slate-50/80">
                         <td className="p-2.5 pl-3 font-medium text-slate-900">{la.date}</td>
                         <td className="p-2.5 font-mono">{la.in_time}</td>

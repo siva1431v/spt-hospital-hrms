@@ -11,6 +11,7 @@ interface AttendanceImportSession {
   date_range_start: string | null
   date_range_end: string | null
   total_records: number
+  total_records_in_pdf?: number
   records_imported: number
   records_duplicate: number
   records_error: number
@@ -18,37 +19,49 @@ interface AttendanceImportSession {
   imported_at: string
 }
 
+interface ImportRecordItem {
+  attendance_date?: string
+  date?: string
+  employee_code?: string
+  employee_name?: string
+  in_time?: string
+  out_time?: string
+  status?: string
+}
+
+interface ImportDetail extends AttendanceImportSession {
+  records?: ImportRecordItem[]
+}
+
 export default function ImportHistoryPage() {
   const [imports, setImports] = useState<AttendanceImportSession[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedImport, setSelectedImport] = useState<any | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-
-  const fetchImports = async () => {
-    setLoading(true)
-    try {
-      const res = await api.get('/attendance/imports')
-      setImports(res.data.items || [])
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const [selectedImport, setSelectedImport] = useState<ImportDetail | null>(null)
 
   useEffect(() => {
-    fetchImports()
+    let active = true
+    async function load() {
+      try {
+        const res = await api.get('/attendance/imports')
+        if (active) setImports(res.data.items || [])
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
   }, [])
 
   const handleViewDetail = async (id: number) => {
-    setDetailLoading(true)
     try {
       const res = await api.get(`/attendance/imports/${id}`)
       setSelectedImport(res.data)
     } catch (err) {
       console.error(err)
-    } finally {
-      setDetailLoading(false)
     }
   }
 
@@ -118,7 +131,7 @@ export default function ImportHistoryPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {selectedImport.records.map((r: any, idx: number) => (
+                    {selectedImport.records?.map((r: ImportRecordItem, idx: number) => (
                       <tr key={idx} className="hover:bg-slate-50">
                         <td className="p-2.5 pl-4 font-mono">{r.attendance_date || r.date || '—'}</td>
                         <td className="p-2.5 font-mono font-bold">{r.employee_code}</td>

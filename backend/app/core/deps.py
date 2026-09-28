@@ -13,19 +13,22 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.user import User, UserRole
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     """Extract and validate the current user from JWT token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="Not authenticated" if not credentials else "Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if not credentials or not credentials.credentials:
+        raise credentials_exception
+
     try:
         payload = decode_token(credentials.credentials)
         if payload.get("type") != "access":

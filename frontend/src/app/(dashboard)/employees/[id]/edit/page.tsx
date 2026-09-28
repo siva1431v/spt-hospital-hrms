@@ -142,7 +142,7 @@ export default function EditEmployeePage() {
     setErrors({})
 
     try {
-      const payload: any = {}
+      const payload: Record<string, unknown> = {}
       Object.entries(formData).forEach(([key, val]) => {
         if (val !== '') {
           payload[key] = val
@@ -155,8 +155,10 @@ export default function EditEmployeePage() {
 
       await api.put(`/employees/${id}`, payload)
       router.push(`/employees/${id}`)
-    } catch (err: any) {
-      const detail = err.response?.data?.detail || 'Failed to update employee.'
+    } catch (err: unknown) {
+      const errResp = (err as { response?: { data?: { detail?: string; errors?: Array<{ field?: string; message?: string }> } } })?.response
+      const detail = errResp?.data?.detail || 'Failed to update employee.'
+      const errorsList = errResp?.data?.errors
       if (typeof detail === 'string') {
         if (detail.toLowerCase().includes('employee id')) {
           setErrors({ employee_id: detail })
@@ -176,10 +178,10 @@ export default function EditEmployeePage() {
         } else {
           setErrors({ api: detail })
         }
-      } else if (Array.isArray(err.response?.data?.errors)) {
+      } else if (Array.isArray(errorsList)) {
         const fieldErrors: FormErrors = {}
         let targetStep = 2
-        for (const e of err.response.data.errors) {
+        for (const e of errorsList) {
           if (e.field?.includes('phone')) {
             fieldErrors.phone = e.message
             targetStep = 1

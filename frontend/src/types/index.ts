@@ -84,7 +84,9 @@ export interface AttendanceRecord {
   employee_id: number
   employee_name?: string
   employee_code?: string
+  biometric_code?: string
   department_id?: number
+  department?: string
   department_name?: string
   shift_code?: string
   attendance_date: string
@@ -146,7 +148,9 @@ export interface PayrollRecord {
   employee_id: number
   employee_name?: string
   employee_code?: string
+  biometric_code?: string
   department?: string
+  department_name?: string
   total_working_days: number
   present_days: number
   absent_days: number
@@ -158,7 +162,9 @@ export interface PayrollRecord {
   ot_amount: number
   gross_salary: number
   total_deductions: number
+  deductions?: number
   net_salary: number
+  total_salary?: number
   status: 'DRAFT' | 'NO_DATA' | 'UNDER_REVIEW' | 'FINALIZED' | 'PAID'
 }
 

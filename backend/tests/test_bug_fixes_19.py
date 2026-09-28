@@ -33,8 +33,7 @@ from app.models.payroll import (
     PayrollPeriod, PayrollRecord, PayrollItem, PayrollStatus
 )
 from app.payroll.engine import PayrollEngine
-
-BASE_URL = "http://localhost:8000"
+from app.main import app
 
 
 @pytest.mark.asyncio
@@ -136,7 +135,7 @@ async def test_item1_finalize_pending_exceptions_blocker():
         session.add(exc)
         await session.commit()
 
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         login_res = await client.post("/api/v1/auth/login", json={"username": "admin", "password": "Admin@123"})
         token = login_res.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
@@ -371,7 +370,7 @@ async def test_item4_employment_date_filtering():
 @pytest.mark.asyncio
 async def test_item5_and_6_attendance_filters_and_pagination():
     """Item 5 & 6: Attendance GET endpoint supports attendance_date, status_filter, search, and pagination."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         login_res = await client.post("/api/v1/auth/login", json={"username": "admin", "password": "Admin@123"})
         token = login_res.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
@@ -402,7 +401,7 @@ async def test_item5_and_6_attendance_filters_and_pagination():
 @pytest.mark.asyncio
 async def test_item7_shift_code_aliases():
     """Item 7: ShiftCodeAlias CRUD and device code mapping."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         login_res = await client.post("/api/v1/auth/login", json={"username": "admin", "password": "Admin@123"})
         token = login_res.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
@@ -431,7 +430,7 @@ async def test_item7_shift_code_aliases():
 @pytest.mark.asyncio
 async def test_item9_and_10_reports_excel_export():
     """Item 9 & 10: Reports endpoints generate valid Excel files."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         login_res = await client.post("/api/v1/auth/login", json={"username": "admin", "password": "Admin@123"})
         token = login_res.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
@@ -459,7 +458,7 @@ async def test_item9_and_10_reports_excel_export():
 @pytest.mark.asyncio
 async def test_item11_cors_headers_on_error():
     """Item 11: CORS headers are present on 4xx error responses."""
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # Send unauthenticated request with Origin header
         headers = {"Origin": "http://localhost:3000"}
         res = await client.get("/api/v1/reports/lateness-lop", headers=headers)

@@ -18,7 +18,7 @@ export default function NotFound() {
             SPT Hospital HRMS
           </h1>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            The page you are looking for doesn't exist or has been moved. Use the quick links below to return to the system.
+            The page you are looking for doesn&apos;t exist or has been moved. Use the quick links below to return to the system.
           </p>
         </div>
 

@@ -17,27 +17,84 @@ import {
 import api from '@/lib/api'
 import { Button } from '@/components/ui/button'
 
+interface LatenessRecord {
+  employee_id?: number
+  employee_name: string
+  biometric_code: string
+  department?: string
+  department_name?: string
+  assigned_shift?: string
+  total_present: number
+  total_absent: number
+  total_late_by_days: number
+  late_days_device?: number
+  late_days_qualifying?: number
+  qualifying_late_days: number
+  lop_days: number
+  total_ot?: string
+  severity?: string
+}
+
+interface DailyGridDay {
+  day: number
+  status: string
+  in_time?: string
+}
+
+interface DailyGridRow {
+  employee_name: string
+  biometric_code: string
+  days: DailyGridDay[]
+}
+
+interface LatenessReportResponse {
+  summary?: {
+    grace_period?: number
+    total_lop_staff?: number
+    total_lop_days?: number
+    total_deductions_approx?: number
+    staff_on_roll?: number
+    days_present?: number
+    days_absent?: number
+    late_past_grace?: number
+    late_device_total?: number
+    lop_days_owed?: number
+    total_ot_formatted?: string
+  }
+  lateness_records?: LatenessRecord[]
+  daily_grid?: DailyGridRow[]
+  flags?: Record<string, unknown>
+}
+
 export default function LatenessReportPage() {
   const [loading, setLoading] = useState(true)
-  const [data, setData] = useState<any | null>(null)
-  const [year, setYear] = useState(2026)
+  const [data, setData] = useState<LatenessReportResponse | null>(null)
+  const [year] = useState(2026)
   const [month, setMonth] = useState(8)
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
-  const fetchLatenessReport = async () => {
+  const refresh = () => {
     setLoading(true)
-    try {
-      const res = await api.get(`/attendance/lateness?year=${year}&month=${month}`)
-      setData(res.data)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
+    setRefreshTrigger((n) => n + 1)
   }
 
   useEffect(() => {
-    fetchLatenessReport()
-  }, [year, month])
+    let active = true
+    async function load() {
+      try {
+        const res = await api.get(`/attendance/lateness?year=${year}&month=${month}`)
+        if (active) setData(res.data)
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [year, month, refreshTrigger])
 
   const summary = data?.summary
   const records = data?.lateness_records || []
@@ -71,7 +128,7 @@ export default function LatenessReportPage() {
             <option value="7">July 2026</option>
             <option value="9">September 2026</option>
           </select>
-          <Button onClick={fetchLatenessReport} variant="outline" size="sm" className="text-xs h-9 gap-2">
+          <Button onClick={refresh} variant="outline" size="sm" className="text-xs h-9 gap-2">
             <Clock className="w-3.5 h-3.5" />
             Refresh
           </Button>
@@ -121,7 +178,7 @@ export default function LatenessReportPage() {
               <div>
                 <strong className="font-bold">Zero-Punch Staff Flag:</strong>{' '}
                 <span>
-                  Saran (208), Selladurai (209), and Abinaya (210) have 0 device punches all month (25 consecutive absences). They are flagged as having "No attendance data" rather than legitimate absences.
+                  Saran (208), Selladurai (209), and Abinaya (210) have 0 device punches all month (25 consecutive absences). They are flagged as having &quot;No attendance data&quot; rather than legitimate absences.
                 </span>
               </div>
             </div>
@@ -164,7 +221,7 @@ export default function LatenessReportPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                  {records.map((r: any, idx: number) => {
+                  {records.map((r: LatenessRecord, idx: number) => {
                     let stripeColor = 'border-l-4 border-l-blue-400 bg-blue-50/20'
                     let badgeColor = 'bg-blue-100 text-blue-800'
                     if (r.severity === 'CRITICAL') {
@@ -226,12 +283,12 @@ export default function LatenessReportPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-[11px] font-mono">
-                  {gridRows.map((row: any, idx: number) => (
+                  {gridRows.map((row: DailyGridRow, idx: number) => (
                     <tr key={idx} className="hover:bg-slate-50">
                       <td className="p-2 font-sans font-medium text-slate-900 sticky left-0 bg-white border-r border-slate-200 whitespace-nowrap z-10">
                         {row.employee_name} <span className="text-[10px] text-slate-400 font-mono">({row.biometric_code})</span>
                       </td>
-                      {row.days.map((dayObj: any, dIdx: number) => {
+                      {row.days.map((dayObj: DailyGridDay, dIdx: number) => {
                         let statusColor = 'bg-rose-500 text-white'
                         let titleText = `Day ${dayObj.day}: Absent`
 
@@ -266,7 +323,7 @@ export default function LatenessReportPage() {
   )
 }
 
-function RefreshIcon(props: any) {
+function RefreshIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />

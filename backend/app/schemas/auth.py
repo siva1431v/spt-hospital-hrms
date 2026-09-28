@@ -36,3 +36,8 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+

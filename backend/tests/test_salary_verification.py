@@ -18,7 +18,7 @@ from app.models.payroll import (
 )
 from app.payroll.engine import PayrollEngine
 
-BASE_URL = "http://localhost:8000"
+from app.main import app
 
 
 @pytest.mark.asyncio
@@ -94,7 +94,7 @@ async def test_salary_verification_finalize_flow():
         session.add_all([rec_a, rec_b])
         await session.commit()
 
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         login_res = await client.post("/api/v1/auth/login", json={"username": "admin", "password": "Admin@123"})
         assert login_res.status_code == 200
         token = login_res.json()["access_token"]

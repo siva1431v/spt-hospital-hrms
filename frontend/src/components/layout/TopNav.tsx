@@ -1,7 +1,7 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { Bell, ChevronRight, Menu, User as UserIcon } from 'lucide-react'
+import { ChevronRight, Menu, User as UserIcon } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
 interface TopNavProps {

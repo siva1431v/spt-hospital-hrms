@@ -28,32 +28,39 @@ export default function AttendanceExceptionsPage() {
   const [statusFilter, setStatusFilter] = useState('PENDING')
   const [severityFilter, setSeverityFilter] = useState('')
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(50)
+  const [pageSize] = useState(50)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [bulkProcessing, setBulkProcessing] = useState(false)
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
 
-  const fetchExceptions = async () => {
-    setLoading(true)
-    try {
-      const params: any = { page, page_size: pageSize }
-      if (statusFilter) params.review_status = statusFilter
-      if (severityFilter) params.severity = severityFilter
-
-      const res = await api.get('/attendance/exceptions', { params })
-      setExceptions(res.data.items || [])
-      setTotalCount(res.data.total || 0)
-      setPendingCount(res.data.pending_total || 0)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const refreshExceptions = () => setRefreshTrigger((n) => n + 1)
 
   useEffect(() => {
-    fetchExceptions()
-    setSelectedIds([])
-  }, [statusFilter, severityFilter, page, pageSize])
+    let active = true
+    async function load() {
+      try {
+        const params: Record<string, string | number> = { page, page_size: pageSize }
+        if (statusFilter) params.review_status = statusFilter
+        if (severityFilter) params.severity = severityFilter
+
+        const res = await api.get('/attendance/exceptions', { params })
+        if (active) {
+          setExceptions(res.data.items || [])
+          setTotalCount(res.data.total || 0)
+          setPendingCount(res.data.pending_total || 0)
+          setSelectedIds([])
+        }
+      } catch (err) {
+        console.error(err)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [statusFilter, severityFilter, page, pageSize, refreshTrigger])
 
   const handleReview = async (id: number, action: 'APPROVED' | 'DISMISSED') => {
     try {
@@ -62,9 +69,10 @@ export default function AttendanceExceptionsPage() {
         notes: `Reviewed as ${action} by HR`,
       })
       toast.success(`Exception marked as ${action.toLowerCase()}`)
-      fetchExceptions()
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to review exception')
+      refreshExceptions()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to review exception')
     }
   }
 
@@ -82,9 +90,10 @@ export default function AttendanceExceptionsPage() {
       })
       toast.success(`Bulk updated ${selectedIds.length} exceptions as ${action.toLowerCase()}`)
       setSelectedIds([])
-      fetchExceptions()
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to bulk review exceptions')
+      refreshExceptions()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to bulk review exceptions')
     } finally {
       setBulkProcessing(false)
     }
