@@ -190,3 +190,35 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
     return {"id": user.id, "username": user.username, "role": user.role.value, "is_active": user.is_active}
+
+
+@router.delete("/users/{user_id}", response_model=dict)
+async def delete_user(
+    user_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN))],
+):
+    """Delete a user account (Super Admin only)."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own user account.")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if user.username == "admin":
+        raise HTTPException(status_code=400, detail="The root 'admin' user cannot be deleted.")
+
+    try:
+        await db.delete(user)
+        await db.commit()
+        return {"message": f"User '{user.username}' deleted successfully."}
+    except Exception:
+        await db.rollback()
+        # Fallback: if foreign keys exist (e.g. created imports or payroll), soft-deactivate
+        user.is_active = False
+        await db.commit()
+        return {
+            "message": f"User '{user.username}' is referenced by historical records, so the account has been deactivated instead of deleted."
+        }

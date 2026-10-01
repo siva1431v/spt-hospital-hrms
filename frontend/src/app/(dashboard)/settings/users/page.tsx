@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   XCircle,
   Edit2,
+  Trash2,
+  AlertTriangle,
   Loader2,
   RefreshCw,
   Search,
@@ -77,6 +79,11 @@ export default function UsersManagementPage() {
     is_active: true,
     employee_id: '' as string | number,
   })
+
+  // Delete User Modal State
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [userToDelete, setUserToDelete] = useState<User | null>(null)
 
   const handleRefresh = async () => {
     setLoading(true)
@@ -205,6 +212,36 @@ export default function UsersManagementPage() {
       toast.error(msg || 'Failed to update user.')
     } finally {
       setEditLoading(false)
+    }
+  }
+
+  const handleOpenDelete = (user: User) => {
+    if (user.id === currentUser?.id) {
+      toast.error('You cannot delete your own user account.')
+      return
+    }
+    if (user.username === 'admin') {
+      toast.error("The root 'admin' user cannot be deleted.")
+      return
+    }
+    setUserToDelete(user)
+    setDeleteModalOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!userToDelete) return
+    setDeleteLoading(true)
+    try {
+      const res = await api.delete(`/users/${userToDelete.id}`)
+      toast.success(res.data.message || `User '${userToDelete.username}' deleted successfully.`)
+      setDeleteModalOpen(false)
+      setUserToDelete(null)
+      handleRefresh()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to delete user.')
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -364,16 +401,35 @@ export default function UsersManagementPage() {
                         {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={!isSuperAdmin}
-                          onClick={() => handleOpenEdit(u)}
-                          className="h-8 px-2 text-xs text-slate-600 hover:text-teal-700 hover:bg-teal-50"
-                        >
-                          <Edit2 className="w-3.5 h-3.5 mr-1" />
-                          Edit
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={!isSuperAdmin}
+                            onClick={() => handleOpenEdit(u)}
+                            className="h-8 px-2 text-xs text-slate-600 hover:text-teal-700 hover:bg-teal-50"
+                          >
+                            <Edit2 className="w-3.5 h-3.5 mr-1" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={!isSuperAdmin || u.id === currentUser?.id || u.username === 'admin'}
+                            onClick={() => handleOpenDelete(u)}
+                            className="h-8 px-2 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 disabled:opacity-30"
+                            title={
+                              u.id === currentUser?.id
+                                ? 'Cannot delete your own account'
+                                : u.username === 'admin'
+                                ? "Cannot delete 'admin'"
+                                : 'Delete user'
+                            }
+                          >
+                            <Trash2 className="w-3.5 h-3.5 mr-1" />
+                            Delete
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -626,6 +682,50 @@ export default function UsersManagementPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Confirm Delete User */}
+      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+        <DialogContent className="max-w-sm bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2 text-rose-600">
+              <AlertTriangle className="w-5 h-5 text-rose-600" />
+              Delete User Account
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs text-slate-600">
+            <p>
+              Are you sure you want to delete user <strong className="text-slate-900">@{userToDelete?.username}</strong> ({userToDelete?.full_name})?
+            </p>
+            <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+              If this user has generated attendance imports or payroll records, the account will be safely deactivated instead of deleted to preserve audit trails.
+            </p>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setDeleteModalOpen(false)
+                setUserToDelete(null)
+              }}
+              className="text-xs h-9"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={deleteLoading}
+              onClick={handleConfirmDelete}
+              className="bg-rose-600 hover:bg-rose-700 text-white text-xs h-9 shadow-xs"
+            >
+              {deleteLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}
+              Confirm Delete
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
