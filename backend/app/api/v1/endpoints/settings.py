@@ -217,8 +217,12 @@ async def delete_user(
     except Exception:
         await db.rollback()
         # Fallback: if foreign keys exist (e.g. created imports or payroll), soft-deactivate
-        user.is_active = False
-        await db.commit()
-        return {
-            "message": f"User '{user.username}' is referenced by historical records, so the account has been deactivated instead of deleted."
-        }
+        res = await db.execute(select(User).where(User.id == user_id))
+        fresh_user = res.scalar_one_or_none()
+        if fresh_user:
+            fresh_user.is_active = False
+            await db.commit()
+            return {
+                "message": f"User '{fresh_user.username}' is referenced by historical records and has been deactivated instead of deleted."
+            }
+        raise HTTPException(status_code=500, detail="Failed to delete or deactivate user.")
