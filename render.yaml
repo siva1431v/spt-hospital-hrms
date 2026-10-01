@@ -1,0 +1,41 @@
+# ============================================================
+# Render Blueprint — SPT Hospital HRMS
+# https://render.com/docs/blueprint-spec
+# ============================================================
+services:
+  # ── FastAPI Backend Web Service ────────────────────────────
+  - type: web
+    name: spt-hospital-backend
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spt-hospital-postgres
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: http://localhost:3000
+      - key: CORS_ORIGIN_REGEX
+        value: ^https?://(localhost|127\.0\.0\.1|.*\.vercel\.app|.*\.onrender\.com)(:\d+)?$
+      - key: LOG_LEVEL
+        value: INFO
+      - key: UPLOAD_DIR
+        value: /app/uploads
+    disk:
+      name: uploads-data
+      mountPath: /app/uploads
+      sizeGB: 10
+
+databases:
+  # ── Managed PostgreSQL Database ─────────────────────────────
+  - name: spt-hospital-postgres
+    plan: starter
+    databaseName: spt_hrms
+    user: spt_user

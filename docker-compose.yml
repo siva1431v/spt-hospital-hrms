@@ -12,7 +12,6 @@ services:
       POSTGRES_DB: spt_hrms
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/seeds/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "5432:5432"
     healthcheck:
@@ -47,7 +46,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       UPLOAD_DIR: /app/uploads
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production-please}
-      CORS_ORIGINS: http://localhost:3000,http://frontend:3000
+      CORS_ORIGINS: http://localhost:3000,http://frontend:3000,http://127.0.0.1:3000
       DEBUG: "true"
     volumes:
       - ./backend:/app
@@ -59,7 +58,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: /app/start.sh
 
   # ─── Next.js Frontend ──────────────────────────────────────
   frontend:
@@ -69,7 +68,7 @@ services:
     container_name: spt_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
       NEXT_PUBLIC_APP_NAME: SPT Hospital HRMS
     volumes:
       - ./frontend:/app

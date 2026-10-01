@@ -104,9 +104,12 @@ async def init_database():
                     print(f"Seeding core database from {seed_sql_path}...")
                     with open(seed_sql_path, "r", encoding="utf-8") as f:
                         sql_content = f.read()
+                    is_sqlite = "sqlite" in settings.DATABASE_URL
                     for statement in sql_content.split(";"):
                         statement = statement.strip()
                         if statement:
+                            if not is_sqlite and statement.startswith("INSERT OR IGNORE INTO"):
+                                statement = statement.replace("INSERT OR IGNORE INTO", "INSERT INTO", 1) + " ON CONFLICT DO NOTHING"
                             await db.execute(text(statement))
                     await db.commit()
                     print("✓ Core database seeded (66 employees, departments, settings).")

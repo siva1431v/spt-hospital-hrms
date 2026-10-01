@@ -3,7 +3,9 @@ import type { AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios'
 import { clearTokens, getRefreshToken, setTokens } from './auth'
 import { toast } from 'sonner'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+const rawBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1').trim()
+const cleanBase = rawBase.replace(/\/+$/, '')
+const API_BASE_URL = cleanBase.endsWith('/api/v1') ? cleanBase : `${cleanBase}/api/v1`
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
