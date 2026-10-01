@@ -12,6 +12,7 @@ from app.core.deps import CurrentUser, require_roles
 from app.models.user import UserRole, User
 from app.models.audit import AuditLog, SystemSetting
 from app.core.security import get_password_hash
+from app.schemas.auth import UserCreate, UserUpdate
 
 router = APIRouter(tags=["Audit & Settings"])
 
@@ -142,24 +143,24 @@ async def list_users(
 
 @router.post("/users", response_model=dict)
 async def create_user(
-    data: dict,
+    data: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN))],
 ):
     existing = await db.execute(
-        select(User).where((User.email == data["email"]) | (User.username == data["username"]))
+        select(User).where((User.email == data.email) | (User.username == data.username))
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Username or email already exists.")
 
     user = User(
-        username=data["username"],
-        email=data["email"],
-        full_name=data["full_name"],
-        hashed_password=get_password_hash(data["password"]),
-        role=UserRole(data.get("role", UserRole.EMPLOYEE.value)),
-        is_active=data.get("is_active", True),
-        employee_id=data.get("employee_id"),
+        username=data.username,
+        email=data.email,
+        full_name=data.full_name,
+        hashed_password=get_password_hash(data.password),
+        role=UserRole(data.role or UserRole.EMPLOYEE.value),
+        is_active=data.is_active if data.is_active is not None else True,
+        employee_id=data.employee_id,
     )
     db.add(user)
     await db.commit()
@@ -170,7 +171,7 @@ async def create_user(
 @router.put("/users/{user_id}", response_model=dict)
 async def update_user(
     user_id: int,
-    data: dict,
+    data: UserUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN))],
 ):
@@ -179,13 +180,18 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    for field in ["full_name", "email", "is_active", "employee_id"]:
-        if field in data:
-            setattr(user, field, data[field])
-    if "role" in data:
-        user.role = UserRole(data["role"])
-    if "password" in data and data["password"]:
-        user.hashed_password = get_password_hash(data["password"])
+    if data.full_name is not None:
+        user.full_name = data.full_name
+    if data.email is not None:
+        user.email = data.email
+    if data.is_active is not None:
+        user.is_active = data.is_active
+    if data.employee_id is not None:
+        user.employee_id = data.employee_id
+    if data.role is not None:
+        user.role = UserRole(data.role)
+    if data.password:
+        user.hashed_password = get_password_hash(data.password)
 
     await db.commit()
     await db.refresh(user)

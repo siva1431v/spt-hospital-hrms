@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
+    ENV: str = "development"
+    ENVIRONMENT: str = "development"
+
+    @property
+    def is_production(self) -> bool:
+        env = (self.ENVIRONMENT or self.ENV or "development").lower()
+        return env in ("production", "prod")
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///spt_hrms.db"

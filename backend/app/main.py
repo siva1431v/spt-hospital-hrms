@@ -48,8 +48,9 @@ app = FastAPI(
     """,
     version=settings.APP_VERSION,
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
 
@@ -113,7 +114,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    allow_origin_regex=settings.CORS_ORIGIN_REGEX or None,
+    allow_origin_regex=None if settings.is_production else (settings.CORS_ORIGIN_REGEX or None),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

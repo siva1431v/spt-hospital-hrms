@@ -9,6 +9,7 @@ const API_BASE_URL = cleanBase.endsWith('/api/v1') ? cleanBase : `${cleanBase}/a
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -103,16 +104,13 @@ api.interceptors.response.use(
       isRefreshing = true
 
       const refreshToken = getRefreshToken()
-      if (!refreshToken) {
-        isRefreshing = false
-        handleAuthFailure()
-        return Promise.reject(error)
-      }
 
       try {
-        const refreshResponse = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-          refresh_token: refreshToken,
-        })
+        const refreshResponse = await axios.post(
+          `${API_BASE_URL}/auth/refresh`,
+          refreshToken ? { refresh_token: refreshToken } : {},
+          { withCredentials: true }
+        )
         const { access_token, refresh_token: newRefreshToken } = refreshResponse.data
         setTokens(access_token, newRefreshToken)
         api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`

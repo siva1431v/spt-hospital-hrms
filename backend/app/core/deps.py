@@ -3,7 +3,7 @@ SPT Hospital HRMS — FastAPI Dependencies
 Reusable dependency functions for authentication and authorization.
 """
 from typing import Annotated
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,20 +17,22 @@ security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """Extract and validate the current user from JWT token."""
+    """Extract and validate the current user from JWT token (header or cookie)."""
+    token = credentials.credentials if (credentials and credentials.credentials) else request.cookies.get("access_token")
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Not authenticated" if not credentials else "Could not validate credentials",
+        detail="Not authenticated" if not token else "Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    if not credentials or not credentials.credentials:
+    if not token:
         raise credentials_exception
 
     try:
-        payload = decode_token(credentials.credentials)
+        payload = decode_token(token)
         if payload.get("type") != "access":
             raise credentials_exception
         user_id: str = payload.get("sub")

@@ -136,8 +136,8 @@ export default function UsersManagementPage() {
       return
     }
 
-    if (createForm.password.length < 6) {
-      toast.error('Password must be at least 6 characters.')
+    if (createForm.password.length < 8) {
+      toast.error('Password must be at least 8 characters.')
       return
     }
 
@@ -189,6 +189,11 @@ export default function UsersManagementPage() {
     e.preventDefault()
     if (!editingUser) return
 
+    if (editForm.password && editForm.password.trim().length < 8) {
+      toast.error('New password must be at least 8 characters.')
+      return
+    }
+
     setEditLoading(true)
     try {
       const payload: Record<string, unknown> = {
@@ -198,7 +203,7 @@ export default function UsersManagementPage() {
         is_active: editForm.is_active,
         employee_id: editForm.employee_id ? Number(editForm.employee_id) : null,
       }
-      if (editForm.password && editForm.password.trim().length >= 6) {
+      if (editForm.password && editForm.password.trim().length >= 8) {
         payload.password = editForm.password.trim()
       }
 
@@ -484,7 +489,9 @@ export default function UsersManagementPage() {
                   <Input
                     required
                     type="password"
-                    placeholder="Min. 6 chars"
+                    minLength={8}
+                    autoComplete="new-password"
+                    placeholder="Min. 8 characters"
                     value={createForm.password}
                     onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
                     className="pl-9 text-xs h-9 font-mono"
@@ -643,7 +650,9 @@ export default function UsersManagementPage() {
               <Label className="text-xs font-semibold">Reset Password (leave blank to keep current)</Label>
               <Input
                 type="password"
-                placeholder="Enter new password (min. 6 chars)"
+                minLength={8}
+                autoComplete="new-password"
+                placeholder="Enter new password (min. 8 characters)"
                 value={editForm.password}
                 onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
                 className="text-xs h-9 font-mono"

@@ -2,17 +2,19 @@
 SPT Hospital HRMS — Authentication API Endpoints
 """
 from datetime import datetime, timezone
-from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from typing import Annotated, Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import verify_password, create_access_token, create_refresh_token, decode_token
 from app.core.deps import get_current_active_user, CurrentUser
 from app.models.user import User
-from app.schemas.auth import TokenResponse, LoginRequest, UserResponse, RefreshTokenRequest
+from app.schemas.auth import TokenResponse, LoginRequest, UserResponse, RefreshTokenRequest, ChangePasswordRequest
+from app.core.security import get_password_hash
 from jose import JWTError
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -21,10 +23,11 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/login", response_model=TokenResponse)
 async def login(
     request: Request,
+    response: Response,
     login_data: LoginRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Login with email/username and password. Returns JWT access + refresh tokens."""
+    """Login with email/username and password. Returns JWT access + refresh tokens and sets httpOnly cookies."""
     # Find user by email or username
     result = await db.execute(
         select(User).where(
@@ -52,6 +55,27 @@ async def login(
     access_token = create_access_token(user.id, user.role.value)
     refresh_token = create_refresh_token(user.id)
 
+    # Set httpOnly, Secure, SameSite=Lax cookies
+    cookie_secure = settings.is_production
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=cookie_secure,
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=cookie_secure,
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/",
+    )
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -62,16 +86,22 @@ async def login(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
-    refresh_data: RefreshTokenRequest,
+    request: Request,
+    response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
+    refresh_data: Optional[RefreshTokenRequest] = None,
 ):
-    """Exchange a refresh token for a new access token."""
+    """Exchange a refresh token (from body or httpOnly cookie) for a new access token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired refresh token",
     )
+    raw_token = (refresh_data.refresh_token if refresh_data and refresh_data.refresh_token else None) or request.cookies.get("refresh_token")
+    if not raw_token:
+        raise credentials_exception
+
     try:
-        payload = decode_token(refresh_data.refresh_token)
+        payload = decode_token(raw_token)
         if payload.get("type") != "refresh":
             raise credentials_exception
         user_id = payload.get("sub")
@@ -85,6 +115,26 @@ async def refresh_token(
 
     access_token = create_access_token(user.id, user.role.value)
     new_refresh_token = create_refresh_token(user.id)
+
+    cookie_secure = settings.is_production
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=cookie_secure,
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=cookie_secure,
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/",
+    )
 
     return TokenResponse(
         access_token=access_token,
@@ -100,9 +150,6 @@ async def get_me(current_user: CurrentUser):
     return current_user
 
 
-from app.schemas.auth import TokenResponse, LoginRequest, UserResponse, ChangePasswordRequest
-from app.core.security import get_password_hash
-
 @router.post("/change-password")
 async def change_password(
     data: ChangePasswordRequest,
@@ -115,10 +162,10 @@ async def change_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect old password",
         )
-    if len(data.new_password) < 6:
+    if len(data.new_password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be at least 6 characters long",
+            detail="New password must be at least 8 characters long",
         )
     current_user.hashed_password = get_password_hash(data.new_password)
     current_user.must_change_password = False
@@ -127,8 +174,9 @@ async def change_password(
 
 
 @router.post("/logout")
-async def logout(current_user: CurrentUser):
-    """Logout (client should discard token)."""
-    # JWT is stateless; client must delete the token.
-    # Future: add token to blocklist in Redis.
+async def logout(response: Response):
+    """Log out user and clear authentication cookies."""
+    response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="refresh_token", path="/")
+    response.delete_cookie(key="token", path="/")
     return {"message": "Logged out successfully"}
