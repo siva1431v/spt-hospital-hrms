@@ -236,7 +236,22 @@ class AttendanceImportService:
                 preview_item["mapped_employee_name"] = emp.full_name
 
                 # Check duplicate
-                if raw_record.attendance_date:
+                if report.report_type == "Monthly Status Report (Summary Report)":
+                    year_val = report.date_range_start.year if report.date_range_start else None
+                    month_val = report.date_range_start.month if report.date_range_start else None
+                    if emp and year_val and month_val:
+                        from app.models.attendance import MonthlyAttendanceAggregate
+                        existing_agg_res = await self.db.execute(
+                            select(MonthlyAttendanceAggregate).where(
+                                MonthlyAttendanceAggregate.employee_id == emp.id,
+                                MonthlyAttendanceAggregate.year == year_val,
+                                MonthlyAttendanceAggregate.month == month_val,
+                            )
+                        )
+                        if existing_agg_res.scalar_one_or_none():
+                            preview_item["is_duplicate"] = True
+                            stats["duplicate"] += 1
+                elif raw_record.attendance_date:
                     is_dup = await self._check_duplicate(emp.id, raw_record.attendance_date)
                     if is_dup:
                         preview_item["is_duplicate"] = True
@@ -282,6 +297,23 @@ class AttendanceImportService:
 
         file_hash = await get_file_hash(pdf_path)
 
+        # Check if this exact file was already imported
+        existing_import_stmt = (
+            select(AttendanceImport)
+            .where(
+                AttendanceImport.file_hash == file_hash,
+                AttendanceImport.status.in_([
+                    ImportStatus.COMPLETED,
+                    ImportStatus.COMPLETED_WITH_WARNINGS,
+                    ImportStatus.PARTIAL,
+                    ImportStatus.SKIPPED,
+                ]),
+            )
+            .order_by(AttendanceImport.imported_at.desc())
+        )
+        existing_import_res = await self.db.execute(existing_import_stmt)
+        existing_import = existing_import_res.scalars().first()
+
         return {
             "report_type": report.report_type,
             "company_name": report.company_name,
@@ -290,6 +322,15 @@ class AttendanceImportService:
             "filename": filename,
             "file_size": file_size,
             "file_hash": file_hash,
+            "is_duplicate_file": bool(existing_import),
+            "existing_import": {
+                "id": existing_import.id,
+                "filename": existing_import.filename,
+                "imported_at": existing_import.imported_at.isoformat() if existing_import.imported_at else None,
+                "records_imported": existing_import.records_imported,
+                "records_duplicate": existing_import.records_duplicate,
+                "status": existing_import.status.value,
+            } if existing_import else None,
             "pdf_path": pdf_path,
             "total_pages": report.total_pages,
             "statistics": stats,
@@ -386,8 +427,23 @@ class AttendanceImportService:
         updated = 0
         errors = 0
 
+        is_skip = duplicate_action.lower() in ("skip", "ignore")
+        is_update = not is_skip
+
         # Special handling for Monthly Status Report (Summary Report)
         if preview_data.get("report_type") == "Monthly Status Report (Summary Report)":
+            from app.models.attendance import MonthlyAttendanceAggregate
+
+            year_val = None
+            month_val = None
+            if preview_data.get("date_range_start"):
+                try:
+                    dt = date.fromisoformat(str(preview_data["date_range_start"]))
+                    year_val = dt.year
+                    month_val = dt.month
+                except Exception:
+                    pass
+
             for record_data in preview_data["records"]:
                 emp_code = record_data.get("employee_code")
                 dept_name = record_data.get("department_name", "")
@@ -408,6 +464,28 @@ class AttendanceImportService:
                     if manual_dept_id:
                         dept_id = int(manual_dept_id)
 
+                is_dup = False
+                if emp and year_val and month_val:
+                    existing_agg = (await self.db.execute(
+                        select(MonthlyAttendanceAggregate).where(
+                            MonthlyAttendanceAggregate.employee_id == emp.id,
+                            MonthlyAttendanceAggregate.year == year_val,
+                            MonthlyAttendanceAggregate.month == month_val,
+                        )
+                    )).scalar_one_or_none()
+                    if existing_agg:
+                        is_dup = True
+
+                if is_dup:
+                    if is_skip:
+                        skipped += 1
+                    else:
+                        updated += 1
+                elif emp:
+                    imported += 1
+                else:
+                    errors += 1
+
                 ir = AttendanceImportRecord(
                     import_id=import_session.id,
                     raw_date=att_date_str,
@@ -422,20 +500,15 @@ class AttendanceImportService:
                     raw_status=record_data.get("status"),
                     mapped_employee_id=emp.id if emp else None,
                     mapped_department_id=dept_id,
-                    is_duplicate=False,
+                    is_duplicate=is_dup,
                     has_warning=bool(record_data.get("warnings")),
                     warning_message=",".join(record_data.get("warnings") or []),
                 )
                 self.db.add(ir)
-                if emp:
-                    imported += 1
-                else:
-                    errors += 1
 
             # Persist monthly aggregates
             monthly_aggs = preview_data.get("monthly_aggregates", [])
             if monthly_aggs:
-                from app.models.attendance import MonthlyAttendanceAggregate
                 for agg_data in monthly_aggs:
                     emp_code = str(agg_data.get("employee_code", "")).strip()
                     emp = employee_map.get(emp_code)
@@ -446,26 +519,19 @@ class AttendanceImportService:
                         )
                         emp = emp_result.scalar_one_or_none()
 
-                    year = preview_data.get("date_range_start")
-                    month_val = None
-                    if year:
-                        from datetime import date as date_type
-                        if isinstance(year, str):
-                            dt = date_type.fromisoformat(year)
-                        else:
-                            dt = year
-                        year = dt.year
-                        month_val = dt.month
-
-                    if year and month_val:
+                    if year_val and month_val:
                         if emp:
-                            await self.db.execute(
-                                delete(MonthlyAttendanceAggregate).where(
+                            existing_agg = (await self.db.execute(
+                                select(MonthlyAttendanceAggregate).where(
                                     MonthlyAttendanceAggregate.employee_id == emp.id,
-                                    MonthlyAttendanceAggregate.year == year,
+                                    MonthlyAttendanceAggregate.year == year_val,
                                     MonthlyAttendanceAggregate.month == month_val,
                                 )
-                            )
+                            )).scalar_one_or_none()
+                            if existing_agg:
+                                if is_skip:
+                                    continue
+                                await self.db.delete(existing_agg)
 
                         new_agg = MonthlyAttendanceAggregate(
                             import_id=import_session.id,
@@ -474,7 +540,7 @@ class AttendanceImportService:
                             employee_name=agg_data.get("employee_name", ""),
                             department_name=agg_data.get("department_name", ""),
                             company_name=agg_data.get("company_name", ""),
-                            year=year,
+                            year=year_val,
                             month=month_val,
                             total_work_duration=agg_data.get("total_work_duration"),
                             total_ot=agg_data.get("total_ot"),
@@ -499,7 +565,7 @@ class AttendanceImportService:
             import_session.report_type = preview_data.get("report_type")
             import_session.company_name = preview_data.get("company_name")
             import_session.records_imported = imported
-            import_session.records_duplicate = 0
+            import_session.records_duplicate = skipped + updated
             import_session.records_error = errors
             import_session.total_records_in_pdf = len(preview_data["records"])
             import_session.status = ImportStatus.COMPLETED if errors == 0 else ImportStatus.COMPLETED_WITH_WARNINGS
@@ -516,8 +582,9 @@ class AttendanceImportService:
             return {
                 "import_id": import_session.id,
                 "imported": imported,
-                "updated": 0,
-                "skipped": 0,
+                "updated": updated,
+                "skipped": skipped,
+                "duplicates": skipped + updated,
                 "errors": errors,
                 "total_in_file": len(preview_data["records"]),
                 "status": import_session.status.value,
@@ -611,7 +678,7 @@ class AttendanceImportService:
             existing = existing_result.scalar_one_or_none()
             is_in_batch_dup = (emp.id, att_date) in processed_emp_dates
 
-            if (existing or is_in_batch_dup) and duplicate_action == "skip":
+            if (existing or is_in_batch_dup) and is_skip:
                 skipped += 1
                 ir = AttendanceImportRecord(
                     import_id=import_session.id,
@@ -758,6 +825,7 @@ class AttendanceImportService:
                         )
                         self.db.add(attendance_record)
                         await self.db.flush()
+                        imported += 1
                 except IntegrityError:
                     skipped += 1
                     ir = AttendanceImportRecord(
@@ -839,8 +907,6 @@ class AttendanceImportService:
                 if old_exc.exception_type not in active_warning_types and old_exc.review_status == ExceptionReviewStatus.PENDING:
                     await self.db.delete(old_exc)
 
-            imported += 1
-
             # Log import record
             ir = AttendanceImportRecord(
                 import_id=import_session.id,
@@ -856,7 +922,7 @@ class AttendanceImportService:
                 raw_status=record_data.get("status"),
                 mapped_employee_id=emp.id,
                 mapped_department_id=dept_id,
-                is_duplicate=(existing is not None and duplicate_action == "skip"),
+                is_duplicate=bool(existing is not None or is_in_batch_dup),
                 has_warning=bool(record_data.get("warnings")),
                 warning_message=",".join(record_data.get("warnings") or []),
                 attendance_id=getattr(attendance_record, "id", None),
@@ -867,7 +933,7 @@ class AttendanceImportService:
         import_session.report_type = preview_data.get("report_type")
         import_session.company_name = preview_data.get("company_name")
         import_session.records_imported = imported
-        import_session.records_duplicate = skipped
+        import_session.records_duplicate = skipped + updated
         import_session.records_error = errors
         import_session.total_records_in_pdf = len(preview_data["records"])
         import_session.unknown_employee_codes = json.dumps(preview_data.get("unknown_employee_codes", []))
@@ -875,20 +941,13 @@ class AttendanceImportService:
         import_session.unmatched_row_count = errors + (len(preview_data.get("unknown_employee_codes", [])) * 25 if preview_data.get("unknown_employee_codes") else 0)
         import_session.unknown_employees = len(preview_data.get("unknown_employee_codes", []))
         import_session.unknown_departments = len(preview_data.get("unknown_department_names", []))
-        if imported == 0 and skipped > 0 and errors == 0:
-            import_session.status = ImportStatus.SKIPPED
-        elif imported > 0 and skipped > 0:
-            import_session.status = ImportStatus.PARTIAL
-        elif errors > 0:
-            import_session.status = ImportStatus.COMPLETED_WITH_WARNINGS
-        else:
-            import_session.status = ImportStatus.COMPLETED
+        import_session.status = ImportStatus.COMPLETED if errors == 0 else ImportStatus.COMPLETED_WITH_WARNINGS
 
         await log_audit(
             self.db, self.user_id, "IMPORT", "AttendanceImport",
             str(import_session.id),
             f"Imported attendance PDF: {preview_data['filename']} "
-            f"({imported} records, {skipped} skipped, {errors} errors)",
+            f"({imported} new records, {updated} updated, {skipped} skipped, {errors} errors)",
         )
 
         # Persist monthly aggregates if present
@@ -966,6 +1025,7 @@ class AttendanceImportService:
             "imported": imported,
             "skipped": skipped,
             "updated": updated,
+            "duplicates": skipped + updated,
             "errors": errors,
             "status": import_session.status.value,
         }

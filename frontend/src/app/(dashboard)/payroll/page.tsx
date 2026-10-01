@@ -157,6 +157,7 @@ function PayrollContent() {
         })
         if (!active) return
         const period = lookupRes.data.period
+        const activeStaffCount = lookupRes.data.active_staff_count || 0
         setCurrentPeriod(period)
 
         if (period) {
@@ -165,11 +166,11 @@ function PayrollContent() {
           })
           if (active) {
             setRecords(recRes.data.items || [])
-            setTotalStaff(recRes.data.total || (recRes.data.items || []).length)
+            setTotalStaff(recRes.data.total || (recRes.data.items || []).length || activeStaffCount)
           }
         } else {
           setRecords([])
-          setTotalStaff(0)
+          setTotalStaff(activeStaffCount)
         }
       } catch (err) {
         console.error(err)

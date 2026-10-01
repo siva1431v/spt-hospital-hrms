@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Optional, List, Dict
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 class SalaryComponentBase(BaseModel):
     name: str
@@ -48,13 +48,36 @@ class SalaryStructureResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+def validate_period_not_future(year: int, month: int):
+    today = date.today()
+    if today.month == 12:
+        max_year = today.year + 1
+        max_month = 1
+    else:
+        max_year = today.year
+        max_month = today.month + 1
+
+    if (year, month) > (max_year, max_month):
+        raise ValueError(
+            f"Cannot create or calculate payroll period for {year}-{month:02d}. "
+            f"Payroll periods cannot be created more than 1 month in the future."
+        )
+
+
 class PayrollPeriodBase(BaseModel):
     year: int
     month: int
     working_days: float
 
+    @model_validator(mode="after")
+    def check_not_future(self):
+        validate_period_not_future(self.year, self.month)
+        return self
+
+
 class PayrollPeriodCreate(PayrollPeriodBase):
     pass
+
 
 class PayrollPeriodResponse(PayrollPeriodBase):
     id: int
@@ -64,13 +87,20 @@ class PayrollPeriodResponse(PayrollPeriodBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 class PayrollCalculationRequest(PayrollPeriodBase):
     pass
+
 
 class PayrollCalculateMonthRequest(BaseModel):
     year: int
     month: int
     working_days: Optional[int] = None
+
+    @model_validator(mode="after")
+    def check_not_future(self):
+        validate_period_not_future(self.year, self.month)
+        return self
 
 class PayrollRecordItemResponse(BaseModel):
     id: int

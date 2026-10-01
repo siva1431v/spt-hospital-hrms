@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Check, Loader2 } from 'lucide-react'
+import { ArrowLeft, Check, Loader2, AlertTriangle } from 'lucide-react'
 import api from '@/lib/api'
-import { Department, Shift } from '@/types'
+import { Department, Shift, Employee } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -28,6 +28,7 @@ export default function NewEmployeePage() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [shifts, setShifts] = useState<Shift[]>([])
   const [errors, setErrors] = useState<FormErrors>({})
+  const [similarStaff, setSimilarStaff] = useState<Employee[]>([])
 
   // Form State
   const [formData, setFormData] = useState({
@@ -55,6 +56,32 @@ export default function NewEmployeePage() {
       })
       .catch((err) => console.error(err))
   }, [])
+
+  // Check for similar employee names when first_name or last_name changes
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const query = formData.first_name.trim()
+      if (query.length < 3) {
+        setSimilarStaff([])
+        return
+      }
+      try {
+        const res = await api.get('/employees', { params: { search: query, page_size: 10 } })
+        const items: Employee[] = res.data.items || []
+        const matches = items.filter((emp) => {
+          const empFirst = (emp.first_name || '').toLowerCase()
+          const empFull = (emp.full_name || '').toLowerCase()
+          const q = query.toLowerCase()
+          return empFirst.includes(q) || empFull.includes(q)
+        })
+        setSimilarStaff(matches)
+      } catch {
+        setSimilarStaff([])
+      }
+    }, 350)
+
+    return () => clearTimeout(timer)
+  }, [formData.first_name, formData.last_name])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -241,6 +268,31 @@ export default function NewEmployeePage() {
                 {errors.last_name && <p className="text-[11px] text-rose-600 font-medium">{errors.last_name}</p>}
               </div>
             </div>
+
+            {similarStaff.length > 0 && (
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs space-y-1.5 animate-in fade-in duration-200">
+                <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Possible Duplicate Employee Detected</span>
+                </div>
+                <p className="text-amber-800 text-[11px]">
+                  Existing staff with similar names already exist in the database:
+                </p>
+                <div className="divide-y divide-amber-200/60 bg-white/70 rounded-md border border-amber-200/80 p-2 space-y-1">
+                  {similarStaff.slice(0, 4).map((s) => (
+                    <div key={s.id} className="pt-1 first:pt-0 flex items-center justify-between text-[11px] text-amber-950">
+                      <span className="font-semibold">{s.first_name} {s.last_name || ''}</span>
+                      <span className="font-mono text-amber-800 text-[10px]">
+                        ID: {s.employee_id} {s.biometric_code ? `• Bio: ${s.biometric_code}` : ''} {s.department_name ? `• ${s.department_name}` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-amber-700 italic">
+                  Please verify this person is a new staff member and not a re-registration of an existing profile.
+                </p>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">

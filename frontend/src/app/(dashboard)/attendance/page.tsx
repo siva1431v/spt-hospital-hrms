@@ -350,8 +350,14 @@ export default function DailyAttendancePage() {
                         />
                       </td>
                       <td className="p-3.5 font-mono text-slate-600">{rec.attendance_date}</td>
-                      <td className="p-3.5 font-mono text-slate-900 font-bold">{rec.employee_code || rec.biometric_code}</td>
-                      <td className="p-3.5 font-semibold text-slate-900">{rec.employee_name || 'Staff'}</td>
+                      <td className="p-3.5 font-semibold text-slate-900">
+                        {rec.employee_name || 'Staff'}
+                        {(rec.employee_code || rec.biometric_code) && (
+                          <span className="text-slate-500 font-normal font-mono text-[11px] ml-1.5">
+                            ({rec.employee_code || rec.biometric_code})
+                          </span>
+                        )}
+                      </td>
                       <td className="p-3.5 text-slate-600">{rec.department_name || rec.department || '—'}</td>
                       <td className="p-3.5 font-mono text-emerald-700">{rec.source_in_time || rec.in_time || '—'}</td>
                       <td className="p-3.5 font-mono text-teal-700">{rec.source_out_time || rec.out_time || '—'}</td>

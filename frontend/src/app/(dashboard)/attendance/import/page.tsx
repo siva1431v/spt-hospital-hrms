@@ -47,6 +47,15 @@ interface ImportPreviewData {
   company_name?: string
   date_range_start?: string
   date_range_end?: string
+  is_duplicate_file?: boolean
+  existing_import?: {
+    id: number
+    filename: string
+    imported_at?: string
+    records_imported?: number
+    records_duplicate?: number
+    status?: string
+  }
   unknown_employee_codes?: string[]
   unknown_departments?: string[]
   unknown_department_names?: string[]
@@ -68,15 +77,13 @@ interface ImportPreviewData {
 }
 
 interface ImportSummaryData {
-  imported_count?: number
-  total_imported?: number
-  skipped_count?: number
-  duplicates_skipped?: number
-  error_count?: number
-  total_errors?: number
+  import_id?: number
   imported?: number
+  updated?: number
   skipped?: number
+  duplicates?: number
   errors?: number
+  status?: string
 }
 
 export default function ImportPdfWizardPage() {
@@ -281,6 +288,21 @@ export default function ImportPdfWizardPage() {
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-800 text-xs font-bold border border-indigo-200">
                 <FileText className="w-3.5 h-3.5" />
                 Detected Format: {previewData.report_type}
+              </div>
+            )}
+
+            {previewData.is_duplicate_file && previewData.existing_import && (
+              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <span>Exact File Previously Imported</span>
+                </div>
+                <p className="text-amber-800">
+                  This file was previously imported on{' '}
+                  <strong>{previewData.existing_import.imported_at ? new Date(previewData.existing_import.imported_at).toLocaleString('en-IN') : 'a prior date'}</strong>{' '}
+                  (Import #{previewData.existing_import.id} &bull; {previewData.existing_import.records_imported} imported, {previewData.existing_import.records_duplicate} duplicates).
+                  Select <strong>&ldquo;Skip existing records&rdquo;</strong> to prevent changes or <strong>&ldquo;Overwrite existing DB records&rdquo;</strong> to re-apply punches.
+                </p>
               </div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-100 text-xs">
@@ -570,18 +592,22 @@ export default function ImportPdfWizardPage() {
             <p className="text-xs text-slate-500 mt-1">All valid attendance records have been persisted to the database.</p>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-lg mx-auto bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs">
             <div>
-              <span className="text-slate-400 font-medium">Imported</span>
-              <p className="text-lg font-bold text-emerald-600">{importSummary.imported}</p>
+              <span className="text-slate-400 font-medium">New Records</span>
+              <p className="text-lg font-bold text-emerald-600">{importSummary.imported ?? 0}</p>
             </div>
             <div>
-              <span className="text-slate-400 font-medium">Skipped</span>
-              <p className="text-lg font-bold text-amber-600">{importSummary.skipped}</p>
+              <span className="text-slate-400 font-medium">Updated</span>
+              <p className="text-lg font-bold text-teal-600">{importSummary.updated ?? 0}</p>
+            </div>
+            <div>
+              <span className="text-slate-400 font-medium">Skipped (Dups)</span>
+              <p className="text-lg font-bold text-amber-600">{importSummary.skipped ?? 0}</p>
             </div>
             <div>
               <span className="text-slate-400 font-medium">Errors</span>
-              <p className="text-lg font-bold text-rose-600">{importSummary.errors}</p>
+              <p className="text-lg font-bold text-rose-600">{importSummary.errors ?? 0}</p>
             </div>
           </div>
 

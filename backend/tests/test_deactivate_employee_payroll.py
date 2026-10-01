@@ -31,14 +31,14 @@ async def test_employee_deactivation_removes_from_payroll():
         # 2. Create a clean test period
         async with AsyncSessionLocal() as session:
             p_res = await session.execute(
-                select(PayrollPeriod).where(PayrollPeriod.year == 2031, PayrollPeriod.month == 7)
+                select(PayrollPeriod).where(PayrollPeriod.year == 2025, PayrollPeriod.month == 7)
             )
             period = p_res.scalar_one_or_none()
             if not period:
                 period = PayrollPeriod(
-                    year=2031,
+                    year=2025,
                     month=7,
-                    period_name="July 2031",
+                    period_name="July 2025",
                     working_days=31,
                     status=PayrollStatus.DRAFT,
                     created_by_id=1,
@@ -88,8 +88,8 @@ async def test_employee_deactivation_removes_from_payroll():
 
             # Add payroll records for both in the period
             engine = PayrollEngine(session)
-            res1 = await engine.calculate_employee_payroll(emp.id, 2031, 7, period=period)
-            res2 = await engine.calculate_employee_payroll(emp_active.id, 2031, 7, period=period)
+            res1 = await engine.calculate_employee_payroll(emp.id, 2025, 7, period=period)
+            res2 = await engine.calculate_employee_payroll(emp_active.id, 2025, 7, period=period)
             assert res1 is not None
             assert res2 is not None
             rec1, _ = res1

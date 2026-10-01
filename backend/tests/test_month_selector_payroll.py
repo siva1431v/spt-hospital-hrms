@@ -25,8 +25,17 @@ async def test_month_year_payroll_flow():
         token = login_res.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
-        test_year = 2034
+        test_year = 2025
         test_month = 5
+
+        # Verify creating period > 1 month in future returns 400
+        future_calc = await client.post(
+            "/api/v1/payroll/periods/calculate",
+            headers=headers,
+            json={"year": 2034, "month": 5}
+        )
+        assert future_calc.status_code == 400
+        assert "1 month in the future" in future_calc.json()["detail"]
 
         # Cleanup any existing test period
         async with AsyncSessionLocal() as session:
@@ -66,7 +75,7 @@ async def test_month_year_payroll_flow():
         period_id = calc_data["period"]["id"]
         assert calc_data["period"]["year"] == test_year
         assert calc_data["period"]["month"] == test_month
-        assert calc_data["period"]["period_name"] == "May 2034"
+        assert calc_data["period"]["period_name"] == "May 2025"
         assert calc_data["period"]["working_days"] == 31
         assert calc_data["calculated"] > 0
 

@@ -35,6 +35,12 @@ async def create_payroll_period(
     year = data["year"]
     month = data["month"]
 
+    from app.schemas.payroll import validate_period_not_future
+    try:
+        validate_period_not_future(year, month)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     existing = await db.execute(
         select(PayrollPeriod).where(PayrollPeriod.year == year, PayrollPeriod.month == month)
     )
@@ -72,12 +78,17 @@ async def lookup_payroll_period(
     month: int = Query(..., ge=1, le=12),
 ):
     """Lookup a payroll period by year and month."""
+    active_staff_res = await db.execute(
+        select(func.count(Employee.id)).where(Employee.is_active == True)
+    )
+    active_staff_count = active_staff_res.scalar() or 0
+
     result = await db.execute(
         select(PayrollPeriod).where(PayrollPeriod.year == year, PayrollPeriod.month == month)
     )
     period = result.scalar_one_or_none()
     if not period:
-        return {"period": None}
+        return {"period": None, "active_staff_count": active_staff_count}
     return {
         "period": {
             "id": period.id,
@@ -86,7 +97,8 @@ async def lookup_payroll_period(
             "month": period.month,
             "working_days": period.working_days,
             "status": period.status.value,
-        }
+        },
+        "active_staff_count": active_staff_count,
     }
 
 
@@ -128,6 +140,12 @@ async def calculate_payroll_by_month(
     month = data.get("month")
     if not year or not month or not (1 <= month <= 12) or not (2020 <= year <= 2050):
         raise HTTPException(status_code=400, detail="Valid year (2020-2050) and month (1-12) are required.")
+
+    from app.schemas.payroll import validate_period_not_future
+    try:
+        validate_period_not_future(year, month)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     import calendar
     result = await db.execute(

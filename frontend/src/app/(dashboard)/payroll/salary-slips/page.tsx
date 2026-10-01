@@ -217,7 +217,14 @@ interface PayrollPeriodItem {
                 {filteredRecords.map((rec) => (
                   <tr key={rec.id} className="hover:bg-slate-50/80">
                     <td className="p-3.5 pl-5 font-mono text-slate-900 font-bold">{rec.employee_code || rec.biometric_code || rec.employee_id}</td>
-                    <td className="p-3.5 font-semibold text-slate-900">{rec.employee_name || 'Staff'}</td>
+                    <td className="p-3.5 font-semibold text-slate-900">
+                      {rec.employee_name || 'Staff'}
+                      {(rec.employee_code || rec.biometric_code || rec.employee_id) && (
+                        <span className="text-slate-500 font-normal font-mono text-[11px] ml-1.5">
+                          ({rec.employee_code || rec.biometric_code || rec.employee_id})
+                        </span>
+                      )}
+                    </td>
                     <td className="p-3.5 text-slate-600">{rec.department || rec.department_name || '—'}</td>
                     <td className="p-3.5 font-mono font-medium">₹ {(Number(rec.basic_salary) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className="p-3.5 font-mono font-semibold text-slate-900">₹ {(Number(rec.gross_salary ?? rec.basic_salary) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
