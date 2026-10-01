@@ -533,12 +533,16 @@ class AttendanceImportService:
                                     continue
                                 await self.db.delete(existing_agg)
 
+                        norm_dept_name = dept.name if dept else (emp.department.name if emp and emp.department else agg_data.get("department_name", ""))
+                        if norm_dept_name and norm_dept_name.upper() in ("DR", "DR."):
+                            norm_dept_name = "DOCTOR"
+
                         new_agg = MonthlyAttendanceAggregate(
                             import_id=import_session.id,
                             employee_id=emp.id if emp else None,
                             employee_code=emp_code,
                             employee_name=agg_data.get("employee_name", ""),
-                            department_name=agg_data.get("department_name", ""),
+                            department_name=norm_dept_name,
                             company_name=agg_data.get("company_name", ""),
                             year=year_val,
                             month=month_val,
@@ -989,12 +993,16 @@ class AttendanceImportService:
                             )
                         )
                     
+                    norm_dept_name = emp.department.name if emp and emp.department else agg_data.get("department_name", "")
+                    if norm_dept_name and norm_dept_name.upper() in ("DR", "DR."):
+                        norm_dept_name = "DOCTOR"
+
                     new_agg = MonthlyAttendanceAggregate(
                         import_id=import_session.id,
                         employee_id=emp.id if emp else None,
                         employee_code=emp_code,
                         employee_name=agg_data.get("employee_name", ""),
-                        department_name=agg_data.get("department_name", ""),
+                        department_name=norm_dept_name,
                         company_name=agg_data.get("company_name", ""),
                         year=year,
                         month=month_val,

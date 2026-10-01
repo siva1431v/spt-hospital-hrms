@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { History, FileText, CheckCircle2, AlertTriangle, XCircle, Loader2 } from 'lucide-react'
 import api from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { formatDate } from '@/lib/dateUtils'
 
 interface AttendanceImportSession {
   id: number
@@ -66,7 +67,7 @@ export default function ImportHistoryPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
+    <div className="w-full space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-200/80 pb-5">
         <div className="flex items-center gap-3">
@@ -91,7 +92,9 @@ export default function ImportHistoryPage() {
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div>
                 <h2 className="text-base font-bold text-slate-900">{selectedImport.filename}</h2>
-                <p className="text-xs text-slate-500">Imported on {new Date(selectedImport.imported_at).toLocaleString()}</p>
+                <p className="text-xs text-slate-500">
+                  Imported on {formatDate(selectedImport.imported_at)} {new Date(selectedImport.imported_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
               </div>
               <Button size="sm" variant="outline" onClick={() => setSelectedImport(null)} className="h-8 px-2 text-xs">
                 Close
@@ -133,7 +136,7 @@ export default function ImportHistoryPage() {
                   <tbody className="divide-y divide-slate-100">
                     {selectedImport.records?.map((r: ImportRecordItem, idx: number) => (
                       <tr key={idx} className="hover:bg-slate-50">
-                        <td className="p-2.5 pl-4 font-mono">{r.attendance_date || r.date || '—'}</td>
+                        <td className="p-2.5 pl-4 font-mono">{formatDate(r.attendance_date || r.date)}</td>
                         <td className="p-2.5 font-mono font-bold">{r.employee_code}</td>
                         <td className="p-2.5">{r.employee_name}</td>
                         <td className="p-2.5 font-mono">{r.in_time || '—'}</td>
@@ -164,33 +167,37 @@ export default function ImportHistoryPage() {
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[11px]">
                 <tr>
-                  <th className="p-3.5 pl-5">File Name</th>
-                  <th className="p-3.5">Import Date</th>
-                  <th className="p-3.5">Date Range</th>
-                  <th className="p-3.5">Total Records</th>
-                  <th className="p-3.5">Imported</th>
-                  <th className="p-3.5">Duplicates</th>
-                  <th className="p-3.5">Status</th>
-                  <th className="p-3.5 text-right pr-5">Actions</th>
+                  <th className="px-3 py-2.5 pl-4 whitespace-nowrap">File Name</th>
+                  <th className="px-3 py-2.5 whitespace-nowrap">Import Date</th>
+                  <th className="px-3 py-2.5 whitespace-nowrap">Date Range</th>
+                  <th className="px-3 py-2.5 text-center whitespace-nowrap">Total Records</th>
+                  <th className="px-3 py-2.5 text-center whitespace-nowrap">Imported</th>
+                  <th className="px-3 py-2.5 text-center whitespace-nowrap">Duplicates</th>
+                  <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
+                  <th className="px-3 py-2.5 text-right pr-4 sticky right-0 bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
                 {imports.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/80">
-                    <td className="p-3.5 pl-5 font-semibold text-slate-900 flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-teal-600 shrink-0" />
-                      <span>{item.filename}</span>
+                  <tr key={item.id} className="hover:bg-slate-50/80 group">
+                    <td className="px-3 py-2 pl-4 font-semibold text-slate-900 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-teal-600 shrink-0" />
+                        <span>{item.filename}</span>
+                      </div>
                     </td>
-                    <td className="p-3.5 text-slate-600">{new Date(item.imported_at).toLocaleString()}</td>
-                    <td className="p-3.5 font-mono text-slate-600">
+                    <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
+                      {formatDate(item.imported_at)} {new Date(item.imported_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-slate-600 whitespace-nowrap">
                       {item.date_range_start && item.date_range_end
-                        ? `${item.date_range_start} → ${item.date_range_end}`
+                        ? `${formatDate(item.date_range_start)} → ${formatDate(item.date_range_end)}`
                         : '—'}
                     </td>
-                    <td className="p-3.5 font-bold font-mono">{item.total_records}</td>
-                    <td className="p-3.5 font-bold font-mono text-emerald-700">{item.records_imported}</td>
-                    <td className="p-3.5 font-bold font-mono text-amber-700">{item.records_duplicate}</td>
-                    <td className="p-3.5">
+                    <td className="px-3 py-2 font-bold font-mono text-center whitespace-nowrap">{item.total_records}</td>
+                    <td className="px-3 py-2 font-bold font-mono text-emerald-700 text-center whitespace-nowrap">{item.records_imported}</td>
+                    <td className="px-3 py-2 font-bold font-mono text-amber-700 text-center whitespace-nowrap">{item.records_duplicate}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
                       {item.status?.toUpperCase() === 'COMPLETED' ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 flex items-center gap-1 w-fit">
                           <CheckCircle2 className="w-3 h-3" /> Completed
@@ -209,7 +216,7 @@ export default function ImportHistoryPage() {
                         </span>
                       )}
                     </td>
-                    <td className="p-3.5 text-right pr-5">
+                    <td className="px-3 py-2 text-right pr-4 sticky right-0 bg-white group-hover:bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">
                       <Button
                         size="sm"
                         variant="outline"

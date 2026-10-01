@@ -19,7 +19,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col min-w-0">
         <TopNav onMenuToggle={() => setSidebarOpen(!sidebarOpen)} />
-        <main className="flex-1 p-6 md:p-8 overflow-y-auto">
+        <main className="flex-1 p-4 md:p-6 overflow-y-auto min-w-0">
           {children}
         </main>
       </div>

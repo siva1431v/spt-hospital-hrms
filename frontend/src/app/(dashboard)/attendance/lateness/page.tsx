@@ -103,7 +103,7 @@ export default function LatenessReportPage() {
   const gracePeriod = summary?.grace_period ?? 5
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+    <div className="w-full space-y-6 pb-12">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200/80 pb-5 gap-4">
         <div>
@@ -171,28 +171,49 @@ export default function LatenessReportPage() {
             </div>
           </div>
 
-          {/* Data Callout Banners */}
-          <div className="space-y-2">
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 flex items-start gap-2.5">
-              <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-              <div>
-                <strong className="font-bold">Zero-Punch Staff Flag:</strong>{' '}
-                <span>
-                  Saran (208), Selladurai (209), and Abinaya (210) have 0 device punches all month (25 consecutive absences). They are flagged as having &quot;No attendance data&quot; rather than legitimate absences.
-                </span>
-              </div>
-            </div>
+          {/* Data Callout Banners - Computed from API and hidden when empty */}
+          {(() => {
+            const zeroPunchList = (flags?.zero_punch_employees as Array<{ code: string; name: string }>) || []
+            const shiftAnomalyList = (flags?.shift_anomalies as Array<{ shift_code: string; message: string }>) || []
+            const hasDeptNorm = Boolean(flags?.has_dept_normalization)
 
-            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-900 flex items-start gap-2.5">
-              <Info className="w-4 h-4 text-indigo-600 mt-0.5 shrink-0" />
-              <div>
-                <strong className="font-bold">Device Data & Shift Anomalies:</strong>{' '}
-                <span>
-                  Shift code <strong className="font-mono bg-indigo-100 px-1 py-0.5 rounded">Sam</strong> appears on Aug 3 and Aug 4 (7 punches across 4 staff) and is excluded from lateness calculations. Device calendar records 0 Leaves/Holidays. <strong className="font-mono bg-indigo-100 px-1 py-0.5 rounded">Dt HR</strong> is normalized to HR.
-                </span>
+            if (zeroPunchList.length === 0 && shiftAnomalyList.length === 0 && !hasDeptNorm) {
+              return null
+            }
+
+            return (
+              <div className="space-y-2">
+                {zeroPunchList.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 flex items-start gap-2.5">
+                    <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                    <div>
+                      <strong className="font-bold">Zero-Punch Staff Flag:</strong>{' '}
+                      <span>
+                        {zeroPunchList.map((e) => `${e.name} (${e.code})`).join(', ')} {zeroPunchList.length === 1 ? 'has' : 'have'} 0 device punches all month. They are flagged as having &quot;No attendance data&quot; rather than legitimate absences.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {(shiftAnomalyList.length > 0 || hasDeptNorm) && (
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-900 flex items-start gap-2.5">
+                    <Info className="w-4 h-4 text-indigo-600 mt-0.5 shrink-0" />
+                    <div className="space-y-1">
+                      <strong className="font-bold">Device Data & Shift Anomalies:</strong>{' '}
+                      {shiftAnomalyList.map((a, idx) => (
+                        <span key={idx} className="block">{a.message}</span>
+                      ))}
+                      {hasDeptNorm && (
+                        <span className="block text-[11px] text-indigo-800">
+                          Export artifact <strong className="font-mono bg-indigo-100 px-1 py-0.5 rounded">Dt HR</strong> is normalized to HR.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          </div>
+            )
+          })()}
 
           {/* LOP Employees Table */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-2xs space-y-4 p-5">

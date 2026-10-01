@@ -536,13 +536,25 @@ async def lateness_and_lop_report(
     from app.models.employee import Employee
     from app.models.attendance import MonthlyAttendanceAggregate
 
-    # Fetch aggregates
-    agg_query = select(MonthlyAttendanceAggregate).where(
-        MonthlyAttendanceAggregate.year == year,
-        MonthlyAttendanceAggregate.month == month,
+    # Fetch aggregates with employee and department
+    agg_query = (
+        select(MonthlyAttendanceAggregate)
+        .options(
+            selectinload(MonthlyAttendanceAggregate.employee).selectinload(Employee.department)
+        )
+        .where(
+            MonthlyAttendanceAggregate.year == year,
+            MonthlyAttendanceAggregate.month == month,
+        )
     )
     agg_result = await db.execute(agg_query)
     aggregates = agg_result.scalars().all()
+
+    def _resolve_dept(a: MonthlyAttendanceAggregate) -> str:
+        d = a.employee.department.name if a.employee and a.employee.department else (a.department_name or "Unassigned")
+        if d.upper() in ("DR", "DR."):
+            return "DOCTOR"
+        return d
 
     # Summary metrics
     staff_on_roll = len(aggregates)
@@ -571,7 +583,7 @@ async def lateness_and_lop_report(
         dept_res = await db.execute(select(Department).where(Department.id == department_id))
         dept = dept_res.scalar_one_or_none()
         if dept:
-            filtered_aggs = [a for a in aggregates if (a.department_name or "").upper() == dept.name.upper()]
+            filtered_aggs = [a for a in aggregates if _resolve_dept(a).upper() == dept.name.upper()]
 
     # LOP Records (qualifying late days > 0)
     lop_records = []
@@ -587,7 +599,7 @@ async def lateness_and_lop_report(
                 "employee_id": a.employee_id,
                 "biometric_code": a.employee_code,
                 "employee_name": a.employee_name,
-                "department": a.department_name,
+                "department": _resolve_dept(a),
                 "late_days_device": a.late_days_device,
                 "late_days_qualifying": a.late_days_qualifying,
                 "lop_days": a.lop_days,
@@ -598,7 +610,7 @@ async def lateness_and_lop_report(
 
     lop_records.sort(key=lambda x: (x["lop_days"], x["late_days_qualifying"]), reverse=True)
 
-    # Build 66x25 daily attendance grid
+    # Build daily attendance grid
     att_result = await db.execute(
         select(Attendance).options(selectinload(Attendance.employee)).where(
             func.extract("year", Attendance.attendance_date) == year,
@@ -629,16 +641,60 @@ async def lateness_and_lop_report(
             "employee_id": a.employee_id,
             "biometric_code": a.employee_code,
             "employee_name": a.employee_name,
-            "department": a.department_name,
+            "department": _resolve_dept(a),
             "days": days_list,
             "has_zero_punches": a.has_zero_punches,
         })
 
-    # Data Flag callout banners
-    zero_punch_employees = [
-        {"code": a.employee_code, "name": a.employee_name, "department": a.department_name}
-        for a in aggregates if a.has_zero_punches or a.employee_code in ["208", "209", "210"]
-    ]
+    # Data Flag callout banners computed dynamically
+    zero_punch_employees = []
+    for a in aggregates:
+        if a.has_zero_punches or (a.present_count == 0 and (not a.total_work_duration or a.total_work_duration in ("00:00", "0", "0:00"))):
+            zero_punch_employees.append({
+                "code": a.employee_code,
+                "name": a.employee_name,
+                "department": _resolve_dept(a),
+            })
+
+    # Detect anomalous shifts (e.g. 'Sam' or other unregistered shift codes)
+    shift_anomaly_map: dict[str, dict] = {}
+    dept_normalization_needed = False
+    for att in all_attendance:
+        s_code = (att.source_shift_code or "").strip()
+        if s_code == "Sam" or (s_code and att.shift_id is None and s_code not in ("GS", "MS", "NS", "NTS", "HK", "HKN", "SS", "SNS", "IS", "B")):
+            if s_code not in shift_anomaly_map:
+                shift_anomaly_map[s_code] = {
+                    "shift_code": s_code,
+                    "dates": set(),
+                    "employee_ids": set(),
+                    "punch_count": 0,
+                }
+            shift_anomaly_map[s_code]["punch_count"] += 1
+            shift_anomaly_map[s_code]["dates"].add(str(att.attendance_date))
+            shift_anomaly_map[s_code]["employee_ids"].add(att.employee_id)
+
+        if "Dt HR" in (att.source_department_name or ""):
+            dept_normalization_needed = True
+
+    shift_anomalies = []
+    for s_info in shift_anomaly_map.values():
+        sorted_dates = sorted(list(s_info["dates"]))
+        date_labels = []
+        for d in sorted_dates:
+            try:
+                dt_obj = date.fromisoformat(d)
+                date_labels.append(dt_obj.strftime("%b %-d"))
+            except Exception:
+                date_labels.append(d)
+        dates_str = " and ".join(date_labels) if len(date_labels) <= 2 else f"{date_labels[0]} to {date_labels[-1]}"
+        shift_anomalies.append({
+            "shift_code": s_info["shift_code"],
+            "dates": sorted_dates,
+            "dates_str": dates_str,
+            "punch_count": s_info["punch_count"],
+            "staff_count": len(s_info["employee_ids"]),
+            "message": f"Shift code '{s_info['shift_code']}' appears on {dates_str} ({s_info['punch_count']} punches across {len(s_info['employee_ids'])} staff) and is excluded from lateness calculations.",
+        })
 
     # Load configured grace period
     from app.models.audit import SystemSetting
@@ -664,17 +720,8 @@ async def lateness_and_lop_report(
         "daily_grid": grid_rows,
         "flags": {
             "zero_punch_employees": zero_punch_employees,
-            "sam_shift_anomaly": {
-                "days": ["2026-08-03", "2026-08-04"],
-                "punches_count": 7,
-                "message": "Shift code 'Sam' appears on Aug 3 and Aug 4 across 4 employees. Lateness calculation excluded for these cells.",
-            },
-            "zero_leaves_device_banner": {
-                "message": "Device calendar records 0 Leaves, WeeklyOffs, or Holidays. Every calendar day is treated as a working day.",
-            },
-            "dept_normalization_banner": {
-                "message": "Export artifact 'Dt HR' normalized to 'HR'. 'Default' is the device fallback department.",
-            },
+            "shift_anomalies": shift_anomalies,
+            "has_dept_normalization": dept_normalization_needed,
         },
     }
 
@@ -685,11 +732,16 @@ async def list_exceptions(
     current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN))],
     review_status: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    exception_date: Optional[date] = Query(None),
+    exception_type: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
     """List attendance exceptions for HR review."""
     from app.models.attendance import ExceptionReviewStatus, ExceptionSeverity
+    from app.models.employee import Employee
+    from sqlalchemy import or_
 
     query = select(AttendanceException).options(
         selectinload(AttendanceException.employee),
@@ -707,6 +759,22 @@ async def list_exceptions(
             query = query.where(AttendanceException.severity == ExceptionSeverity(severity.upper()))
         except ValueError:
             pass
+    if exception_type:
+        query = query.where(AttendanceException.exception_type == exception_type)
+    if exception_date:
+        query = query.where(AttendanceException.exception_date == exception_date)
+    if search:
+        search_term = f"%{search.strip()}%"
+        query = query.outerjoin(Employee, AttendanceException.employee_id == Employee.id).where(
+            or_(
+                Employee.first_name.ilike(search_term),
+                Employee.last_name.ilike(search_term),
+                Employee.employee_id.ilike(search_term),
+                Employee.biometric_code.ilike(search_term),
+                AttendanceException.reason.ilike(search_term),
+                AttendanceException.original_value.ilike(search_term),
+            )
+        )
 
     count_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = count_result.scalar() or 0

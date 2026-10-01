@@ -101,6 +101,22 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     },
   ]
 
+  // Find single active item: match longest href that is a path prefix of pathname
+  // Dashboard ('/' or '/dashboard') and '/attendance' must match exactly.
+  const allItems = navGroups.flatMap((g) => g.items)
+  const matchingItems = allItems.filter((item) => {
+    if (item.href === '/dashboard' || item.href === '/' || item.href === '/attendance') {
+      return pathname === item.href
+    }
+    return pathname === item.href || pathname.startsWith(item.href + '/')
+  })
+
+  let activeHref = ''
+  if (matchingItems.length > 0) {
+    matchingItems.sort((a, b) => b.href.length - a.href.length)
+    activeHref = matchingItems[0].href
+  }
+
   return (
     <aside
       className={cn(
@@ -110,7 +126,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       )}
     >
       {/* Header / Logo */}
-      <div className="p-5 flex items-center gap-3 border-b border-slate-800 bg-slate-950/40">
+      <div className="p-5 flex items-center gap-3 border-b border-slate-800 bg-slate-950/40 shrink-0">
         <div className="w-9 h-9 rounded-lg bg-teal-500 flex items-center justify-center text-slate-950 font-bold shadow-md shadow-teal-500/20">
           <Cross className="w-5 h-5 fill-slate-950" />
         </div>
@@ -121,7 +137,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-800">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-800">
         {navGroups.map((group, idx) => (
           <div key={idx} className="space-y-1">
             <h2 className="px-3 text-[10px] font-semibold text-slate-400 tracking-wider uppercase">
@@ -133,7 +149,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 return null
               }
 
-              const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
+              const isActive = item.href === activeHref
 
               return (
                 <Link
@@ -157,7 +173,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       </div>
 
       {/* Profile & Logout Footer */}
-      <div className="p-3 border-t border-slate-800 bg-slate-950/50 flex items-center justify-between">
+      <div className="p-3 border-t border-slate-800 bg-slate-950/50 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5 overflow-hidden">
           <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-semibold text-teal-400">
             {user?.full_name?.substring(0, 2).toUpperCase() || 'US'}

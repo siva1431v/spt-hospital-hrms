@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
+import { formatDate } from '@/lib/dateUtils'
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value)
@@ -42,6 +43,35 @@ export default function DailyAttendancePage() {
   const [pageSize] = useState(50)
   const [total, setTotal] = useState(0)
   const debouncedSearch = useDebounce(search, 300)
+
+  // Default to today (or latest date with data) on initial load
+  useEffect(() => {
+    let active = true
+    async function initDefaultDate() {
+      const todayStr = new Date().toISOString().split('T')[0]
+      try {
+        const todayCheck = await api.get('/attendance', { params: { attendance_date: todayStr, page_size: 1 } })
+        if (!active) return
+        if (todayCheck.data.total > 0) {
+          setSelectedDate(todayStr)
+        } else {
+          const latestRes = await api.get('/attendance', { params: { page_size: 1 } })
+          if (!active) return
+          if (latestRes.data.items && latestRes.data.items.length > 0) {
+            setSelectedDate(latestRes.data.items[0].attendance_date)
+          } else {
+            setSelectedDate(todayStr)
+          }
+        }
+      } catch {
+        if (active) setSelectedDate(todayStr)
+      }
+    }
+    initDefaultDate()
+    return () => {
+      active = false
+    }
+  }, [])
 
   // Selection for bulk reclassification
   const [selectedIds, setSelectedIds] = useState<number[]>([])
@@ -216,7 +246,7 @@ export default function DailyAttendancePage() {
   }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
+    <div className="w-full space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200/80 pb-5">
         <div>
           <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Daily Attendance Records</h1>
@@ -313,7 +343,7 @@ export default function DailyAttendancePage() {
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
                 <tr>
-                  <th className="p-3.5 pl-4 w-10">
+                  <th className="px-2.5 py-2.5 pl-3 w-10">
                     <input
                       type="checkbox"
                       checked={selectedIds.length === attendance.length && attendance.length > 0}
@@ -321,16 +351,16 @@ export default function DailyAttendancePage() {
                       className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
                     />
                   </th>
-                  <th className="p-3.5">Date</th>
-                  <th className="p-3.5">Emp ID</th>
-                  <th className="p-3.5">Employee Name</th>
-                  <th className="p-3.5">Department</th>
-                  <th className="p-3.5">In Time</th>
-                  <th className="p-3.5">Out Time</th>
-                  <th className="p-3.5">Work (hrs)</th>
-                  <th className="p-3.5">OT (hrs)</th>
-                  <th className="p-3.5">Status</th>
-                  <th className="p-3.5 text-right pr-5">Action</th>
+                  <th className="px-2.5 py-2.5 whitespace-nowrap">Date</th>
+                  <th className="px-2.5 py-2.5 whitespace-nowrap">Emp Code</th>
+                  <th className="px-2.5 py-2.5 whitespace-nowrap">Employee Name</th>
+                  <th className="px-2.5 py-2.5 whitespace-nowrap">Department</th>
+                  <th className="px-2.5 py-2.5 whitespace-nowrap">In Time</th>
+                  <th className="px-2.5 py-2.5 whitespace-nowrap">Out Time</th>
+                  <th className="px-2.5 py-2.5 text-center whitespace-nowrap">Work (hrs)</th>
+                  <th className="px-2.5 py-2.5 text-center whitespace-nowrap">OT (hrs)</th>
+                  <th className="px-2.5 py-2.5 whitespace-nowrap">Status</th>
+                  <th className="px-3 py-2.5 text-right pr-4 sticky right-0 bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -340,8 +370,8 @@ export default function DailyAttendancePage() {
                   const isLeave = rec.status === 'LEAVE'
 
                   return (
-                    <tr key={rec.id} className={`hover:bg-slate-50/80 transition-colors ${isSelected ? 'bg-teal-50/30' : ''}`}>
-                      <td className="p-3.5 pl-4">
+                    <tr key={rec.id} className={`hover:bg-slate-50/80 transition-colors group ${isSelected ? 'bg-teal-50/30' : ''}`}>
+                      <td className="px-2.5 py-2 pl-3">
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -349,21 +379,19 @@ export default function DailyAttendancePage() {
                           className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
                         />
                       </td>
-                      <td className="p-3.5 font-mono text-slate-600">{rec.attendance_date}</td>
-                      <td className="p-3.5 font-semibold text-slate-900">
-                        {rec.employee_name || 'Staff'}
-                        {(rec.employee_code || rec.biometric_code) && (
-                          <span className="text-slate-500 font-normal font-mono text-[11px] ml-1.5">
-                            ({rec.employee_code || rec.biometric_code})
-                          </span>
-                        )}
+                      <td className="px-2.5 py-2 font-mono text-slate-600 whitespace-nowrap">{formatDate(rec.attendance_date)}</td>
+                      <td className="px-2.5 py-2 font-mono text-slate-600 font-semibold whitespace-nowrap">
+                        {rec.employee_code || rec.biometric_code || '—'}
                       </td>
-                      <td className="p-3.5 text-slate-600">{rec.department_name || rec.department || '—'}</td>
-                      <td className="p-3.5 font-mono text-emerald-700">{rec.source_in_time || rec.in_time || '—'}</td>
-                      <td className="p-3.5 font-mono text-teal-700">{rec.source_out_time || rec.out_time || '—'}</td>
-                      <td className="p-3.5 font-mono">{rec.work_minutes ? (rec.work_minutes / 60).toFixed(1) : '0.0'}</td>
-                      <td className="p-3.5 font-mono text-purple-700 font-bold">{rec.ot_minutes ? (rec.ot_minutes / 60).toFixed(1) : '0.0'}</td>
-                      <td className="p-3.5">
+                      <td className="px-2.5 py-2 font-semibold text-slate-900 whitespace-nowrap">
+                        {rec.employee_name || 'Staff'}
+                      </td>
+                      <td className="px-2.5 py-2 text-slate-600 whitespace-nowrap">{rec.department_name || rec.department || '—'}</td>
+                      <td className="px-2.5 py-2 font-mono text-emerald-700 whitespace-nowrap">{rec.source_in_time || rec.in_time || '—'}</td>
+                      <td className="px-2.5 py-2 font-mono text-teal-700 whitespace-nowrap">{rec.source_out_time || rec.out_time || '—'}</td>
+                      <td className="px-2.5 py-2 font-mono text-center whitespace-nowrap">{rec.work_minutes ? (rec.work_minutes / 60).toFixed(1) : '0.0'}</td>
+                      <td className="px-2.5 py-2 font-mono text-purple-700 font-bold text-center whitespace-nowrap">{rec.ot_minutes ? (rec.ot_minutes / 60).toFixed(1) : '0.0'}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap">
                         {rec.status === 'PRESENT' && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">PRESENT</span>}
                         {rec.status === 'ABSENT' && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 text-rose-800">ABSENT</span>}
                         {rec.status === 'PRESENT_INCOMPLETE' && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800">NO OUT PUNCH</span>}
@@ -377,7 +405,7 @@ export default function DailyAttendancePage() {
                           <span className="ml-1 text-[9px] text-amber-600 font-bold" title="HR Corrected">✓</span>
                         )}
                       </td>
-                      <td className="p-3.5 text-right pr-5">
+                      <td className="px-3 py-2 text-right pr-4 sticky right-0 bg-white group-hover:bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
                           {isAbsent && (
                             <Button
@@ -470,7 +498,7 @@ export default function DailyAttendancePage() {
               {targetRecords.length === 1 && (
                 <>
                   <p>Staff: <strong className="text-slate-900">{targetRecords[0].employee_name || 'Staff'}</strong> ({targetRecords[0].employee_code})</p>
-                  <p>Date: <strong className="text-slate-900">{targetRecords[0].attendance_date}</strong></p>
+                  <p>Date: <strong className="text-slate-900">{formatDate(targetRecords[0].attendance_date)}</strong></p>
                 </>
               )}
             </div>
@@ -537,7 +565,7 @@ export default function DailyAttendancePage() {
 
             <div className="bg-slate-50 p-3 rounded-lg text-xs space-y-1 text-slate-700 border border-slate-100">
               <p>Employee: <strong className="text-slate-900">{selectedRecord.employee_name || 'Staff'}</strong> ({selectedRecord.employee_code})</p>
-              <p>Date: <strong className="text-slate-900">{selectedRecord.attendance_date}</strong></p>
+              <p>Date: <strong className="text-slate-900">{formatDate(selectedRecord.attendance_date)}</strong></p>
               <p>Original In/Out: <span className="font-mono">{selectedRecord.source_in_time || '—'}</span> / <span className="font-mono">{selectedRecord.source_out_time || '—'}</span></p>
             </div>
 

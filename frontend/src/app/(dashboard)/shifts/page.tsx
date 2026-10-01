@@ -300,33 +300,33 @@ export default function ShiftsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {shifts.map((shift) => (
             <div key={shift.id} className="bg-white p-5 rounded-xl border border-slate-200 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2.5 rounded-lg border ${shift.is_split ? 'bg-blue-50 text-blue-700 border-blue-200' : shift.is_overnight ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className={`p-2.5 rounded-lg border shrink-0 ${shift.is_split ? 'bg-blue-50 text-blue-700 border-blue-200' : shift.is_overnight ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
                     {shift.is_split ? <ArrowLeftRight className="w-5 h-5" /> : shift.is_overnight ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
                   </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">{shift.name}</h3>
-                    <span className="text-[10px] font-mono font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
-                      CODE: {shift.code}
-                    </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h3 className="text-sm font-bold text-slate-900">{shift.name}</h3>
+                      <span className="text-[10px] font-mono font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 shrink-0">
+                        {shift.code}
+                      </span>
+                      {shift.is_overnight && (
+                        <span className="text-[10px] font-semibold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full shrink-0">
+                          Overnight
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {shift.is_overnight && (
-                    <span className="text-[10px] font-semibold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full">
-                      Overnight
-                    </span>
-                  )}
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => openEdit(shift)} className="p-1.5 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded-md transition-colors" title="Edit">
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => setDeletingShift(shift)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Delete">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => openEdit(shift)} className="p-1.5 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded-md transition-colors" title="Edit">
+                    <Edit className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => setDeletingShift(shift)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Delete">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
 

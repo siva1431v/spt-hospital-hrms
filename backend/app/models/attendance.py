@@ -328,6 +328,7 @@ class MonthlyAttendanceAggregate(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     import_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("attendance_imports.id", ondelete="CASCADE"), nullable=True)
     employee_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=True, index=True)
+    employee: Mapped[Optional["Employee"]] = relationship("Employee")  # type: ignore[name-defined]
     employee_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     employee_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     department_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

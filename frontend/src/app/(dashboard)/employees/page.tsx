@@ -142,7 +142,7 @@ export default function EmployeesPage() {
   const isAllSelected = employees.length > 0 && selectedIds.length === employees.length
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
+    <div className="w-full space-y-6">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200/80 pb-5">
         <div>
@@ -217,7 +217,7 @@ export default function EmployeesPage() {
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
                 <tr>
-                  <th className="p-3.5 pl-4 w-10 text-center">
+                  <th className="px-2.5 py-2.5 pl-3 w-10 text-center">
                     <input
                       type="checkbox"
                       checked={isAllSelected}
@@ -225,16 +225,16 @@ export default function EmployeesPage() {
                       className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                     />
                   </th>
-                  <th className="p-3.5 pl-2">Emp ID</th>
-                  <th className="p-3.5">Biometric</th>
-                  <th className="p-3.5">Full Name</th>
-                  <th className="p-3.5">Department</th>
-                  <th className="p-3.5">Designation</th>
-                  <th className="p-3.5">Shift</th>
-                  <th className="p-3.5 text-right font-mono">Basic (₹)</th>
-                  <th className="p-3.5 text-right font-mono">Savings (₹)</th>
-                  <th className="p-3.5 text-center">Status</th>
-                  <th className="p-3.5 text-right pr-5">Actions</th>
+                  <th className="px-2.5 py-2.5 pl-1 whitespace-nowrap">Emp ID</th>
+                  <th className="px-2.5 py-2.5 whitespace-nowrap">Biometric</th>
+                  <th className="px-2.5 py-2.5">Full Name</th>
+                  <th className="px-2.5 py-2.5">Department</th>
+                  <th className="px-2.5 py-2.5">Designation</th>
+                  <th className="px-2.5 py-2.5 text-center">Shift</th>
+                  <th className="px-2.5 py-2.5 text-right font-mono whitespace-nowrap">Basic (₹)</th>
+                  <th className="px-2.5 py-2.5 text-right font-mono whitespace-nowrap">Savings (₹)</th>
+                  <th className="px-2.5 py-2.5 text-center">Status</th>
+                  <th className="px-3 py-2.5 text-right pr-4 sticky right-0 bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -247,9 +247,9 @@ export default function EmployeesPage() {
                   return (
                     <tr
                       key={emp.id}
-                      className={`hover:bg-slate-50/80 transition-colors ${isSelected ? 'bg-teal-50/40' : ''}`}
+                      className={`hover:bg-slate-50/80 transition-colors group ${isSelected ? 'bg-teal-50/40' : ''}`}
                     >
-                      <td className="p-3.5 pl-4 w-10 text-center">
+                      <td className="px-2.5 py-2 pl-3 w-10 text-center">
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -257,26 +257,26 @@ export default function EmployeesPage() {
                           className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                         />
                       </td>
-                      <td className="p-3.5 pl-2 font-mono text-slate-600 font-bold">{emp.employee_id}</td>
-                      <td className="p-3.5 font-mono text-teal-700 font-semibold">{emp.biometric_code || '—'}</td>
-                      <td className="p-3.5">
+                      <td className="px-2.5 py-2 pl-1 font-mono text-slate-600 font-bold whitespace-nowrap">{emp.employee_id}</td>
+                      <td className="px-2.5 py-2 font-mono text-teal-700 font-semibold whitespace-nowrap">{emp.biometric_code || '—'}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap">
                         <div className="font-semibold text-slate-900">{emp.full_name}</div>
                         {emp.email && <div className="text-[10px] text-slate-400 font-normal">{emp.email}</div>}
                       </td>
-                      <td className="p-3.5">
+                      <td className="px-2.5 py-2 whitespace-nowrap">
                         <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 font-normal">
                           {emp.department_name || 'Unassigned'}
                         </Badge>
                       </td>
-                      <td className="p-3.5 text-slate-600">{emp.designation_name || '—'}</td>
-                      <td className="p-3.5 font-mono text-slate-500">{emp.shift_code || 'GS'}</td>
-                      <td className="p-3.5 text-right font-mono text-slate-900 font-semibold">
+                      <td className="px-2.5 py-2 text-slate-600 whitespace-nowrap">{emp.designation_name || '—'}</td>
+                      <td className="px-2.5 py-2 font-mono text-slate-500 text-center whitespace-nowrap">{emp.shift_code || 'GS'}</td>
+                      <td className="px-2.5 py-2 text-right font-mono text-slate-900 font-semibold whitespace-nowrap">
                         ₹ {emp.basic_salary ? emp.basic_salary.toLocaleString('en-IN') : '0'}
                       </td>
-                      <td className="p-3.5 text-right font-mono text-amber-800 font-bold">
+                      <td className="px-2.5 py-2 text-right font-mono text-amber-800 font-bold whitespace-nowrap">
                         ₹ {savingsAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="p-3.5 text-center">
+                      <td className="px-2.5 py-2 text-center whitespace-nowrap">
                         {emp.is_active ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
                             Active
@@ -287,7 +287,7 @@ export default function EmployeesPage() {
                           </span>
                         )}
                       </td>
-                      <td className="p-3.5 text-right pr-5 space-x-1">
+                      <td className="px-3 py-2 text-right pr-4 space-x-1 sticky right-0 bg-white group-hover:bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">
                         <Link href={`/employees/${emp.id}`}>
                           <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-slate-500 hover:text-teal-600" title="View">
                             <Eye className="w-3.5 h-3.5" />

@@ -18,6 +18,7 @@ import {
 import api from '@/lib/api'
 import { StatCard } from '@/components/ui/stat-card'
 import { DashboardStats } from '@/types'
+import { formatDate } from '@/lib/dateUtils'
 import Link from 'next/link'
 
 interface ActivityItem {
@@ -234,7 +235,7 @@ export default function DashboardPage() {
                     </p>
                   </div>
                   <span className="text-[10px] text-slate-400 font-mono">
-                    {new Date(act.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {formatDate(act.created_at)} {new Date(act.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
               ))
