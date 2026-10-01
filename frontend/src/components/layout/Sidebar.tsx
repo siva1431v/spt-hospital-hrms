@@ -137,7 +137,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-800">
+      <nav aria-label="Sidebar navigation" className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-800">
         {navGroups.map((group, idx) => (
           <div key={idx} className="space-y-1">
             <h2 className="px-3 text-[10px] font-semibold text-slate-400 tracking-wider uppercase">
@@ -170,7 +170,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             })}
           </div>
         ))}
-      </div>
+      </nav>
 
       {/* Profile & Logout Footer */}
       <div className="p-3 border-t border-slate-800 bg-slate-950/50 flex items-center justify-between shrink-0">

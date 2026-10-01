@@ -360,7 +360,7 @@ export default function DailyAttendancePage() {
                   <th className="px-2.5 py-2.5 text-center whitespace-nowrap">Work (hrs)</th>
                   <th className="px-2.5 py-2.5 text-center whitespace-nowrap">OT (hrs)</th>
                   <th className="px-2.5 py-2.5 whitespace-nowrap">Status</th>
-                  <th className="px-3 py-2.5 text-right pr-4 sticky right-0 bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">Action</th>
+                  <th className="px-3 py-2.5 text-right pr-4 sticky right-0 bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
