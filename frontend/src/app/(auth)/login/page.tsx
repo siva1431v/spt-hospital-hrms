@@ -178,6 +178,12 @@ export default function LoginPage() {
               )}
             </Button>
           </form>
+
+          <div className="pt-2 text-center border-t border-slate-100">
+            <p className="text-[11px] text-slate-500">
+              Hospital personnel without login access should contact the <span className="font-semibold text-slate-700">HR Department</span> or <span className="font-semibold text-slate-700">Hospital Administrator</span> to have an account provisioned.
+            </p>
+          </div>
         </div>
       </div>
     </div>

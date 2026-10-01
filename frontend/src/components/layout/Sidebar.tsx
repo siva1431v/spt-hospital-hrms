@@ -94,6 +94,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     {
       group: 'SYSTEM',
       items: [
+        { title: 'Users', href: '/settings/users', icon: <Users className="w-4 h-4" />, roles: ['SUPER_ADMIN'] },
         { title: 'Audit Logs', href: '/audit-logs', icon: <Shield className="w-4 h-4" />, roles: ['SUPER_ADMIN', 'HR_ADMIN'] },
         { title: 'Settings', href: '/settings', icon: <Settings className="w-4 h-4" />, roles: ['SUPER_ADMIN', 'HR_ADMIN'] },
       ],

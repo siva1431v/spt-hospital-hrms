@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Save, Building, Clock, IndianRupee, Loader2 } from 'lucide-react'
+import Link from 'next/link'
+import { Save, Building, Clock, IndianRupee, Loader2, Users } from 'lucide-react'
 import api from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -69,9 +70,17 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
-      <div className="border-b border-slate-200/80 pb-5">
-        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">System Settings</h1>
-        <p className="text-xs text-slate-500 mt-1">Configure global hospital HRMS parameters, attendance thresholds, and payroll rules</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/80 pb-5">
+        <div>
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">System Settings</h1>
+          <p className="text-xs text-slate-500 mt-1">Configure global hospital HRMS parameters, attendance thresholds, and payroll rules</p>
+        </div>
+        <Link href="/settings/users">
+          <Button variant="outline" size="sm" className="text-xs h-9">
+            <Users className="w-4 h-4 mr-1.5 text-teal-600" />
+            Manage Users
+          </Button>
+        </Link>
       </div>
 
       <form onSubmit={handleSave} className="bg-white p-6 rounded-xl border border-slate-200 space-y-6 shadow-xs">
