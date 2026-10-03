@@ -852,13 +852,16 @@ async def create_salary_structure(
 
 
 @router.get("/salary-slips/{record_id}")
+@router.get("/payroll/salary-slips/{record_id}")
 async def download_salary_slip(
     record_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
+    presigned: bool = Query(False, description="Return presigned S3 URL instead of streaming binary"),
 ):
     """Download or generate a PDF salary slip for a payroll record."""
     from app.services.salary_slip import generate_salary_slip
+    from app.services.storage import storage_service
     import os
 
     result = await db.execute(
@@ -875,20 +878,40 @@ async def download_salary_slip(
         if current_user.employee_id != record.employee_id:
             raise HTTPException(status_code=403, detail="Access denied")
 
-    # Generate if not exists
+    # Check if existing slip is valid
     slip_path = None
-    if record.salary_slip and os.path.exists(record.salary_slip.file_path):
-        slip_path = record.salary_slip.file_path
-    else:
+    if record.salary_slip and record.salary_slip.file_path:
+        if await storage_service.file_exists(record.salary_slip.file_path):
+            slip_path = record.salary_slip.file_path
+
+    if not slip_path:
         slip_path = await generate_salary_slip(record_id, db, current_user.id)
 
-    if not slip_path or not os.path.exists(slip_path):
+    if not slip_path:
         raise HTTPException(status_code=500, detail="Failed to generate salary slip.")
 
-    with open(slip_path, "rb") as f:
-        content = f.read()
-
     filename = os.path.basename(slip_path)
+
+    # Return presigned S3 URL if requested and S3 backend is enabled
+    if presigned and storage_service.is_s3_enabled:
+        presigned_url = await storage_service.generate_presigned_url(
+            slip_path,
+            download_filename=filename,
+        )
+        if presigned_url:
+            return {
+                "download_url": presigned_url,
+                "expires_in": settings.AWS_S3_PRESIGNED_URL_EXPIRES_SECONDS,
+                "filename": filename,
+            }
+
+    try:
+        content = await storage_service.get_bytes(slip_path)
+    except FileNotFoundError:
+        # Re-generate if deleted
+        slip_path = await generate_salary_slip(record_id, db, current_user.id)
+        content = await storage_service.get_bytes(slip_path)
+
     return Response(
         content=content,
         media_type="application/pdf",

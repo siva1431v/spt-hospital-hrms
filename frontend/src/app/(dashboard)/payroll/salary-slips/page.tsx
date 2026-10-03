@@ -41,6 +41,7 @@ interface PayrollPeriodItem {
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [downloadingId, setDownloadingId] = useState<number | null>(null)
 
   const handleYearChange = (newYear: number) => {
     let newMonth = month
@@ -99,20 +100,46 @@ interface PayrollPeriodItem {
     }
   }, [year, month])
 
-  const handleDownloadSlip = async (recordId: number) => {
+  const handleDownloadSlip = async (recordId: number, employeeCode?: string) => {
     try {
-      const response = await api.get(`/salary-slips/${recordId}`, {
+      setDownloadingId(recordId)
+      const defaultFilename = `Salary_Slip_${employeeCode ? employeeCode + '_' : ''}${recordId}.pdf`
+      const response = await api.get(`/salary-slips/${recordId}?presigned=true`, {
         responseType: 'blob',
       })
-      const url = window.URL.createObjectURL(new Blob([response.data]))
+
+      const contentType = response.headers['content-type']
+      const isJson =
+        response.data?.type === 'application/json' ||
+        (typeof contentType === 'string' && contentType.includes('application/json'))
+
+      if (isJson) {
+        const text = await response.data.text()
+        const json = JSON.parse(text)
+        if (json.download_url) {
+          const link = document.createElement('a')
+          link.href = json.download_url
+          link.target = '_blank'
+          link.setAttribute('download', json.filename || defaultFilename)
+          document.body.appendChild(link)
+          link.click()
+          link.remove()
+          return
+        }
+      }
+
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
       const link = document.createElement('a')
       link.href = url
-      link.setAttribute('download', `Salary_Slip_${recordId}.pdf`)
+      link.setAttribute('download', defaultFilename)
       document.body.appendChild(link)
       link.click()
       link.remove()
+      window.URL.revokeObjectURL(url)
     } catch (err) {
       alert('Failed to download salary slip PDF.')
+    } finally {
+      setDownloadingId(null)
     }
   }
 
@@ -241,10 +268,15 @@ interface PayrollPeriodItem {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => handleDownloadSlip(rec.id)}
+                        disabled={downloadingId === rec.id}
+                        onClick={() => handleDownloadSlip(rec.id, rec.employee_code || rec.biometric_code)}
                         className="h-7 px-2.5 text-xs text-teal-700 border-teal-200 hover:bg-teal-50 gap-1.5"
                       >
-                        <Download className="w-3.5 h-3.5" />
+                        {downloadingId === rec.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
                         PDF Slip
                       </Button>
                     </td>

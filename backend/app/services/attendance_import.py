@@ -407,10 +407,29 @@ class AttendanceImportService:
             if dept:
                 dept_map[dept_name.upper().strip()] = dept
 
+        # Archive the imported PDF to storage_service (AWS S3 or persistent local storage)
+        temp_file = preview_data.get("_temp_path") or preview_data.get("pdf_path")
+        stored_file_path = temp_file or preview_data.get("filename", "attendance_report.pdf")
+        if temp_file and os.path.exists(temp_file):
+            try:
+                from app.services.storage import storage_service
+                filename_orig = preview_data.get("filename", "attendance_report.pdf")
+                safe_fname = filename_orig.replace(" ", "_").replace("/", "_")
+                file_hash_prefix = (preview_data.get("file_hash") or "import")[:12]
+                storage_key = f"pdfs/{file_hash_prefix}_{safe_fname}"
+                stored_file_path = await storage_service.upload_file(
+                    local_file_path=temp_file,
+                    key=storage_key,
+                    content_type="application/pdf",
+                    metadata={"uploaded_by": str(self.user_id)},
+                )
+            except Exception as e:
+                logger.warning(f"Failed to archive PDF in storage_service: {e}")
+
         # Create the import session record
         import_session = AttendanceImport(
             filename=preview_data.get("filename", "attendance_report.pdf"),
-            file_path=preview_data.get("_temp_path") or preview_data.get("pdf_path") or preview_data.get("filename", "attendance_report.pdf"),
+            file_path=stored_file_path,
             file_size_bytes=preview_data.get("file_size", 0),
             file_hash=preview_data.get("file_hash", ""),
             report_type=preview_data.get("report_type"),

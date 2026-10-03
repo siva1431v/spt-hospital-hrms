@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.services.storage import storage_service
 from app.models.payroll import PayrollRecord, PayrollItem, SalarySlip, ComponentType
 from app.models.employee import Employee
 from app.models.department import Department
@@ -317,23 +318,37 @@ async def generate_salary_slip(
 
     doc.build(story)
 
+    file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+
+    # Store via StorageService (AWS S3 or local storage)
+    storage_key = f"salary_slips/{filename}"
+    stored_path = await storage_service.upload_file(
+        local_file_path=file_path,
+        key=storage_key,
+        content_type="application/pdf",
+        metadata={
+            "employee_id": str(emp.employee_id),
+            "period": f"{period.year}_{period.month:02d}",
+        },
+    )
+
     # Save slip record
     existing_slip_result = await db.execute(
         select(SalarySlip).where(SalarySlip.payroll_record_id == payroll_record_id)
     )
     existing_slip = existing_slip_result.scalar_one_or_none()
     if existing_slip:
-        existing_slip.file_path = file_path
+        existing_slip.file_path = stored_path
         existing_slip.generated_at = datetime.now(timezone.utc)
         existing_slip.generated_by_id = generated_by_id
     else:
         slip = SalarySlip(
             payroll_record_id=payroll_record_id,
-            file_path=file_path,
+            file_path=stored_path,
             generated_by_id=generated_by_id,
         )
         db.add(slip)
 
     await db.commit()
-    logger.info(f"Generated salary slip: {file_path}")
-    return file_path
+    logger.info(f"Generated and stored salary slip: {stored_path}")
+    return stored_path

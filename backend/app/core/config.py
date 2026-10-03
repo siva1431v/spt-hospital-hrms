@@ -3,7 +3,7 @@ SPT Hospital HRMS — Application Configuration
 Reads from environment variables with pydantic-settings.
 """
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -73,9 +73,24 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
-    # File Upload
+    # File Upload & Cloud Storage (AWS S3)
+    STORAGE_BACKEND: str = "local"  # "local" | "s3"
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE_MB: int = 50
+
+    # AWS Credentials & S3 Settings
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    AWS_REGION: str = "ap-south-1"
+    AWS_S3_BUCKET_NAME: Optional[str] = None
+    AWS_S3_PREFIX: str = "hrms"
+    AWS_S3_ENDPOINT_URL: Optional[str] = None
+    AWS_S3_SIGNATURE_VERSION: str = "s3v4"
+    AWS_S3_PRESIGNED_URL_EXPIRES_SECONDS: int = 3600
+
+    @property
+    def is_s3_enabled(self) -> bool:
+        return self.STORAGE_BACKEND.lower() == "s3" and bool(self.AWS_S3_BUCKET_NAME)
 
     @property
     def max_upload_size_bytes(self) -> int:

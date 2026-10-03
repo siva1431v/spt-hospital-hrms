@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from typing import Annotated, Optional
 from datetime import date, datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, extract
 from sqlalchemy.orm import selectinload
@@ -242,6 +242,46 @@ async def get_import_detail(
             for r in records
         ],
     }
+
+
+@router.get("/imports/{import_id}/download")
+async def download_import_pdf(
+    import_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN))],
+    presigned: bool = Query(False, description="Return presigned S3 download URL"),
+):
+    """Download the original uploaded PDF file for an import from storage (AWS S3 or local)."""
+    from app.services.storage import storage_service
+    result = await db.execute(select(AttendanceImport).where(AttendanceImport.id == import_id))
+    imp = result.scalar_one_or_none()
+    if not imp or not imp.file_path:
+        raise HTTPException(status_code=404, detail="Import record or file path not found")
+
+    filename = imp.filename or f"attendance_import_{import_id}.pdf"
+
+    if presigned and storage_service.is_s3_enabled:
+        presigned_url = await storage_service.generate_presigned_url(
+            imp.file_path,
+            download_filename=filename,
+        )
+        if presigned_url:
+            return {
+                "download_url": presigned_url,
+                "expires_in": settings.AWS_S3_PRESIGNED_URL_EXPIRES_SECONDS,
+                "filename": filename,
+            }
+
+    try:
+        content = await storage_service.get_bytes(imp.file_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Import PDF file could not be found in storage.")
+
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.get("", response_model=dict)

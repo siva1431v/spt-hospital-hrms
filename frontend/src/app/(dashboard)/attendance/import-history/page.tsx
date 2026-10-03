@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { History, FileText, CheckCircle2, AlertTriangle, XCircle, Loader2 } from 'lucide-react'
+import { History, FileText, CheckCircle2, AlertTriangle, XCircle, Loader2, Download } from 'lucide-react'
 import api from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { formatDate } from '@/lib/dateUtils'
@@ -38,6 +38,7 @@ export default function ImportHistoryPage() {
   const [imports, setImports] = useState<AttendanceImportSession[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedImport, setSelectedImport] = useState<ImportDetail | null>(null)
+  const [downloadingId, setDownloadingId] = useState<number | null>(null)
 
   useEffect(() => {
     let active = true
@@ -63,6 +64,49 @@ export default function ImportHistoryPage() {
       setSelectedImport(res.data)
     } catch (err) {
       console.error(err)
+    }
+  }
+
+  const handleDownloadPdf = async (id: number, filename?: string) => {
+    try {
+      setDownloadingId(id)
+      const defaultFilename = filename || `attendance_import_${id}.pdf`
+      const response = await api.get(`/attendance/imports/${id}/download?presigned=true`, {
+        responseType: 'blob',
+      })
+
+      const contentType = response.headers['content-type']
+      const isJson =
+        response.data?.type === 'application/json' ||
+        (typeof contentType === 'string' && contentType.includes('application/json'))
+
+      if (isJson) {
+        const text = await response.data.text()
+        const json = JSON.parse(text)
+        if (json.download_url) {
+          const link = document.createElement('a')
+          link.href = json.download_url
+          link.target = '_blank'
+          link.setAttribute('download', json.filename || defaultFilename)
+          document.body.appendChild(link)
+          link.click()
+          link.remove()
+          return
+        }
+      }
+
+      const url = window.URL.createObjectURL(response.data)
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', defaultFilename)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      alert('Original PDF file is not available or could not be downloaded.')
+    } finally {
+      setDownloadingId(null)
     }
   }
 
@@ -96,9 +140,25 @@ export default function ImportHistoryPage() {
                   Imported on {formatDate(selectedImport.imported_at)} {new Date(selectedImport.imported_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </p>
               </div>
-              <Button size="sm" variant="outline" onClick={() => setSelectedImport(null)} className="h-8 px-2 text-xs">
-                Close
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={downloadingId === selectedImport.id}
+                  onClick={() => handleDownloadPdf(selectedImport.id, selectedImport.filename)}
+                  className="h-8 px-2.5 text-xs text-slate-700 border-slate-200 hover:bg-slate-50 gap-1.5"
+                >
+                  {downloadingId === selectedImport.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5 text-slate-500" />
+                  )}
+                  Download PDF
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setSelectedImport(null)} className="h-8 px-2 text-xs">
+                  Close
+                </Button>
+              </div>
             </div>
 
             <div className="grid grid-cols-4 gap-3 bg-slate-50 p-3 rounded-lg text-center text-xs">
@@ -217,14 +277,31 @@ export default function ImportHistoryPage() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right pr-4 sticky right-0 bg-white group-hover:bg-slate-50 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] z-10 whitespace-nowrap">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleViewDetail(item.id)}
-                        className="h-7 px-2.5 text-xs text-teal-700 border-teal-200 hover:bg-teal-50"
-                      >
-                        View Log
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={downloadingId === item.id}
+                          onClick={() => handleDownloadPdf(item.id, item.filename)}
+                          className="h-7 px-2 text-xs text-slate-700 border-slate-200 hover:bg-slate-50 gap-1"
+                          title="Download original eSSL PDF"
+                        >
+                          {downloadingId === item.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Download className="w-3 h-3 text-slate-500" />
+                          )}
+                          PDF
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleViewDetail(item.id)}
+                          className="h-7 px-2.5 text-xs text-teal-700 border-teal-200 hover:bg-teal-50"
+                        >
+                          View Log
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -62,10 +62,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 @app.get("/health", tags=["System"])
 async def health_check():
     """Health check endpoint for load balancers and monitoring."""
+    from app.services.storage import storage_service
+    storage_info = await storage_service.health_check()
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
+        "storage": storage_info,
     }
 
 
