@@ -329,15 +329,15 @@ function PayrollContent() {
   const currentMonthLabel = `${MONTH_NAMES[month]} ${year}`
 
   const baseSalaryPreview = editingRecord?.basic_salary || 0
-  const daysInMonthPreview = currentPeriod?.month === 9 ? 30 : 31
-  const perDayPreview = baseSalaryPreview / daysInMonthPreview
+  const daysInMonthPreview = new Date(year, month, 0).getDate()
+  const perDayPreview = daysInMonthPreview > 0 ? baseSalaryPreview / daysInMonthPreview : 0
   const effectivePresentPreview = Math.min(editPresent, daysInMonthPreview)
   const effectiveLeavePreview = Math.min(editLeave, 3.0)
   const payableDaysPreview = Number((effectivePresentPreview + (editHalf * 0.5) + effectiveLeavePreview + editOffDuty).toFixed(2))
   const salaryPartPreview = Number(Math.min(payableDaysPreview * perDayPreview, baseSalaryPreview).toFixed(2))
   const lopDedPreview = Number(Math.min(editLOP * perDayPreview, salaryPartPreview).toFixed(2))
   const fundDedPreview = Number((editingRecord?.security_fund_deduction || 0).toFixed(2))
-  const netSalaryPreview = Number((Math.max(0, salaryPartPreview - (lopDedPreview + fundDedPreview)) + editCollection).toFixed(2))
+  const netSalaryPreview = Number((Math.max(0, salaryPartPreview + editCollection - (lopDedPreview + fundDedPreview))).toFixed(2))
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -752,7 +752,7 @@ function PayrollContent() {
                 const lopDed = Number(Math.min(editLOP * perDayPreview, salPart).toFixed(2))
                 const fundDed = Number((editingRecord.security_fund_deduction || 0).toFixed(2))
                 const totDed = Number((lopDed + fundDed).toFixed(2))
-                const netSal = Number((Math.max(0, salPart - totDed) + editCollection).toFixed(2))
+                const netSal = Number((Math.max(0, salPart + editCollection - totDed)).toFixed(2))
 
                 return (
                   <div className="p-3.5 bg-teal-50/70 rounded-lg border border-teal-200 space-y-1.5 text-teal-900">

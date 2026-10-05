@@ -345,52 +345,31 @@ async def update_payroll_record(
         raise HTTPException(status_code=404, detail="Payroll record not found")
 
     if rec.period and rec.period.status == PayrollStatus.FINALIZED:
-        raise HTTPException(status_code=400, detail="Cannot edit finalized payroll period")
-
-    override_inputs = {}
-    if data.present_days is not None:
-        override_inputs["present_days"] = data.present_days
-    if data.half_days is not None:
-        override_inputs["half_days"] = data.half_days
-    if data.leave_days is not None:
-        override_inputs["leave_days"] = data.leave_days
-    if data.off_duty_days is not None:
-        override_inputs["off_duty_days"] = data.off_duty_days
-    if data.qualifying_late_days is not None:
-        override_inputs["qualifying_late_days"] = data.qualifying_late_days
-    if data.lop_days is not None:
-        override_inputs["lop_days"] = data.lop_days
-    elif data.loss_of_pay_days is not None:
-        override_inputs["loss_of_pay_days"] = data.loss_of_pay_days
-    """
-    Allow HR to manually override an employee's inputs for a payroll period.
-    Recalculates payable_days, salary_part, and total_salary automatically.
-    """
-    result = await db.execute(select(PayrollRecord).where(PayrollRecord.id == record_id))
-    rec = result.scalar_one_or_none()
-    if not rec:
-        raise HTTPException(status_code=404, detail="Payroll record not found")
-
-    p_res = await db.execute(select(PayrollPeriod).where(PayrollPeriod.id == rec.period_id))
-    period = p_res.scalar_one_or_none()
-    if period and period.status == PayrollStatus.FINALIZED:
         raise HTTPException(status_code=400, detail="Cannot edit records in a finalized payroll period.")
 
     engine = PayrollEngine(db)
-    override_dict = {
-        "present_days": data.present_days,
-        "half_days": data.half_days,
-        "leave_days": data.leave_days,
-        "off_duty_days": data.off_duty_days,
-        "lop_days": data.lop_days if data.lop_days is not None else 0.0,
-        "collection": data.collection if data.collection is not None else 0.0,
-    }
+
+    if data.is_manual_override is False:
+        # Reset override: calculate fresh from attendance records
+        override_dict = {"is_manual_override": False}
+    else:
+        override_dict = {
+            "present_days": data.present_days if data.present_days is not None else rec.present_days,
+            "half_days": data.half_days if data.half_days is not None else rec.half_days,
+            "leave_days": data.leave_days if data.leave_days is not None else rec.leave_days,
+            "off_duty_days": data.off_duty_days if data.off_duty_days is not None else rec.off_duty_days,
+            "lop_days": data.lop_days if data.lop_days is not None else (data.loss_of_pay_days if data.loss_of_pay_days is not None else rec.lop_days),
+            "collection": data.collection if data.collection is not None else (rec.collection or 0.0),
+            "is_manual_override": True,
+        }
+        if data.qualifying_late_days is not None:
+            override_dict["qualifying_late_days"] = data.qualifying_late_days
 
     calc_res = await engine.calculate_employee_payroll(
         employee_id=rec.employee_id,
-        year=period.year if period else 2026,
-        month=period.month if period else 8,
-        period=period,
+        year=rec.period.year if rec.period else 2026,
+        month=rec.period.month if rec.period else 8,
+        period=rec.period,
         override_inputs=override_dict,
     )
 
