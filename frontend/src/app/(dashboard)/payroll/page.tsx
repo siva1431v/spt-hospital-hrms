@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { toast } from 'sonner'
 
 const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
@@ -218,6 +219,7 @@ function PayrollContent() {
         setTotalStaff(recRes.data.total || (recRes.data.items || []).length)
       }
       refresh()
+      toast.success(`Payroll recalculated successfully for ${MONTH_NAMES[month]} ${year}.`)
     } catch (err: unknown) {
       const resp = (err as { response?: { data?: { detail?: string | { message?: string } } } })?.response
       const detail = resp?.data?.detail

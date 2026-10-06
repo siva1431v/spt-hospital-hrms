@@ -108,30 +108,22 @@ class PayrollEngine:
         att_result = await self.db.execute(att_query)
         attendance_records = att_result.scalars().all()
 
-        # 1. Load pre-computed monthly aggregate from PDF import (if any)
+        # 1. Load pre-computed monthly aggregate from PDF import (matched by employee_id or biometric/employee code)
+        from sqlalchemy import or_
+        emp_code_str = str(employee.biometric_code or employee.employee_id or "")
         agg_result = await self.db.execute(
             select(MonthlyAttendanceAggregate).where(
-                MonthlyAttendanceAggregate.employee_id == employee_id,
                 MonthlyAttendanceAggregate.year == year,
                 MonthlyAttendanceAggregate.month == month,
+                or_(
+                    MonthlyAttendanceAggregate.employee_id == employee_id,
+                    MonthlyAttendanceAggregate.employee_code == emp_code_str,
+                    MonthlyAttendanceAggregate.employee_code == str(employee.employee_id or ""),
+                    MonthlyAttendanceAggregate.employee_code == str(employee.biometric_code or ""),
+                )
             )
         )
-        monthly_agg = agg_result.scalar_one_or_none()
-
-        # Load attendance records for the month if present_days not overridden
-        if override_inputs and "present_days" in override_inputs:
-            present_days = float(override_inputs["present_days"])
-        elif existing and existing.is_manual_override:
-            present_days = float(existing.present_days)
-        else:
-            present_days = float(sum(
-                1 for a in attendance_records
-                if a.status in [AttendanceStatus.PRESENT, AttendanceStatus.PRESENT_OVERNIGHT]
-                or (a.status == AttendanceStatus.PRESENT_INCOMPLETE and a.is_corrected)
-            ))
-            # Fallback to monthly aggregate present_count if no daily attendance records exist
-            if present_days == 0 and monthly_agg and monthly_agg.present_count > 0:
-                present_days = float(monthly_agg.present_count)
+        monthly_agg = agg_result.scalars().first()
 
         # Load system settings
         from app.models.audit import SystemSetting
@@ -150,35 +142,71 @@ class PayrollEngine:
         except Exception as e:
             logger.warning(f"Could not load system settings: {e}")
 
-        # Determine Loss of Pay (LOP) days & qualifying late arrivals
-
-        # Check if employee has zero punches in attendance records / aggregate
-        has_punches = any(
-            a.status in [AttendanceStatus.PRESENT, AttendanceStatus.PRESENT_OVERNIGHT, AttendanceStatus.PRESENT_INCOMPLETE]
-            or a.check_in_datetime is not None
-            for a in attendance_records
+        # Check approved leave requests for the month
+        lr_res = await self.db.execute(
+            select(func.coalesce(func.sum(LeaveRequest.days_count), 0.0)).where(
+                LeaveRequest.employee_id == employee_id,
+                LeaveRequest.status == LeaveRequestStatus.APPROVED,
+                extract("year", LeaveRequest.start_date) == year,
+                extract("month", LeaveRequest.start_date) == month,
+            )
         )
-        if monthly_agg and monthly_agg.has_zero_punches:
-            has_punches = False
+        approved_lr_days = float(lr_res.scalar() or 0.0)
 
-        if override_inputs and "qualifying_late_days" in override_inputs:
-            qualifying_late_days = int(override_inputs["qualifying_late_days"])
-            lop_days = float(override_inputs.get("lop_days", qualifying_late_days // late_days_per_lop))
-        elif override_inputs and ("lop_days" in override_inputs or "loss_of_pay_days" in override_inputs):
-            lop_days = float(override_inputs.get("lop_days", override_inputs.get("loss_of_pay_days", 0.0)))
-            qualifying_late_days = int(override_inputs.get("qualifying_late_days", lop_days * late_days_per_lop))
-        elif existing and existing.is_manual_override:
-            qualifying_late_days = int(existing.qualifying_late_days if existing.qualifying_late_days is not None else (existing.loss_of_pay_days * late_days_per_lop))
-            lop_days = float(existing.lop_days if existing.lop_days is not None else existing.loss_of_pay_days)
-        elif not has_punches or (employee.biometric_code and str(employee.biometric_code) in ["203", "204", "208", "209", "210"]):
-            # Exclude zero-punch staff from lateness & LOP entirely
-            qualifying_late_days = 0
-            lop_days = 0.0
-        elif monthly_agg and not monthly_agg.has_zero_punches and (monthly_agg.late_days_qualifying > 0 or monthly_agg.late_by_days > 0 or monthly_agg.lop_days > 0):
-            qualifying_late_days = int(monthly_agg.late_days_qualifying if monthly_agg.late_days_qualifying is not None else (monthly_agg.late_by_days or 0))
-            lop_days = float(monthly_agg.lop_days if monthly_agg.lop_days is not None else (qualifying_late_days // late_days_per_lop))
+        # 2. Extract Attendance Counts (Present, Absent, Leave)
+        if override_inputs and "present_days" in override_inputs and override_inputs["present_days"] is not None:
+            present_days = float(override_inputs["present_days"])
+        elif existing and existing.is_manual_override and existing.present_days is not None:
+            present_days = float(existing.present_days)
         else:
-            # 2. Derive from daily attendance lateness (late > grace_period)
+            present_days = float(sum(
+                1 for a in attendance_records
+                if a.status in [AttendanceStatus.PRESENT, AttendanceStatus.PRESENT_OVERNIGHT]
+                or (a.status == AttendanceStatus.PRESENT_INCOMPLETE and a.is_corrected)
+            ))
+            if (present_days == 0 or not attendance_records) and monthly_agg and monthly_agg.present_count is not None:
+                present_days = float(monthly_agg.present_count)
+
+        if override_inputs and "leave_days" in override_inputs and override_inputs["leave_days"] is not None:
+            leave_days = float(override_inputs["leave_days"])
+            absent_days = float(override_inputs.get("absent_days", max(0.0, float(effective_days_in_month) - present_days - leave_days)))
+        elif existing and existing.is_manual_override and existing.leave_days is not None:
+            leave_days = float(existing.leave_days)
+            absent_days = float(existing.absent_days if existing.absent_days is not None else max(0.0, float(effective_days_in_month) - present_days - leave_days))
+        else:
+            if attendance_records:
+                absent_count_att = sum(1 for a in attendance_records if a.status == AttendanceStatus.ABSENT)
+                leave_count_att = sum(1 for a in attendance_records if a.status == AttendanceStatus.LEAVE)
+                absent_days = float(absent_count_att)
+                leave_days = float(leave_count_att + approved_lr_days)
+            elif monthly_agg:
+                absent_days = float(monthly_agg.absent_count or 0)
+                leave_days = float((monthly_agg.leaves_taken or 0) + approved_lr_days)
+            else:
+                absent_days = max(0.0, float(effective_days_in_month) - present_days)
+                leave_days = approved_lr_days
+
+        # First 3 days of absence / leave are paid
+        # Paid Leave = MIN(absent_days + leave_days, 3)
+        # Unpaid Absence LOP = MAX((absent_days + leave_days) - 3, 0)
+        total_absences = absent_days + leave_days
+        effective_paid_leave = min(total_absences, paid_leave_cap)
+        unpaid_absence_days = max(0.0, total_absences - paid_leave_cap)
+
+        # 3. Lateness LOP: 3 late arrivals = 1 LOP day (Late LOP = floor(late_count / 3))
+        if override_inputs and "qualifying_late_days" in override_inputs and override_inputs["qualifying_late_days"] is not None:
+            qualifying_late_days = int(override_inputs["qualifying_late_days"])
+            late_lop_days = float(override_inputs.get("lop_days", qualifying_late_days // late_days_per_lop))
+        elif override_inputs and ("lop_days" in override_inputs or "loss_of_pay_days" in override_inputs):
+            late_lop_days = float(override_inputs.get("lop_days", override_inputs.get("loss_of_pay_days", 0.0)))
+            qualifying_late_days = int(override_inputs.get("qualifying_late_days", late_lop_days * late_days_per_lop))
+        elif existing and existing.is_manual_override and existing.lop_days is not None:
+            late_lop_days = float(existing.lop_days)
+            qualifying_late_days = int(existing.qualifying_late_days if existing.qualifying_late_days is not None else late_lop_days * late_days_per_lop)
+        elif monthly_agg:
+            qualifying_late_days = int(monthly_agg.late_by_days if monthly_agg.late_by_days is not None else (monthly_agg.late_days_qualifying or 0))
+            late_lop_days = float(qualifying_late_days // late_days_per_lop)
+        else:
             att_late_result = await self.db.execute(
                 select(Attendance).where(
                     Attendance.employee_id == employee_id,
@@ -193,59 +221,40 @@ class PayrollEngine:
                 1 for a in late_records
                 if getattr(a, "late_minutes", 0) > emp_grace or getattr(a, "is_late", False)
             )
-            lop_days = float(qualifying_late_days // late_days_per_lop)
+            late_lop_days = float(qualifying_late_days // late_days_per_lop)
 
+        lop_days = late_lop_days
         loss_of_pay_days = lop_days
 
         # Additional inputs (override > existing > default)
         half_days = float(
-            override_inputs["half_days"] if override_inputs and "half_days" in override_inputs
-            else (existing.half_days if existing and existing.is_manual_override else 0.0)
+            override_inputs["half_days"] if override_inputs and "half_days" in override_inputs and override_inputs["half_days"] is not None
+            else (existing.half_days if existing and existing.is_manual_override and existing.half_days is not None else 0.0)
         )
-        if override_inputs and "leave_days" in override_inputs and override_inputs["leave_days"] is not None:
-            leave_days = float(override_inputs["leave_days"])
-        elif existing and existing.is_manual_override and existing.leave_days is not None:
-            leave_days = float(existing.leave_days)
-        else:
-            att_leaves = sum(1 for a in attendance_records if a.status == AttendanceStatus.LEAVE)
-            if att_leaves == 0 and monthly_agg and (monthly_agg.leaves_taken or 0) > 0:
-                att_leaves = float(monthly_agg.leaves_taken)
-            if att_leaves == 0:
-                # Check approved leave requests for the month
-                lr_res = await self.db.execute(
-                    select(func.coalesce(func.sum(LeaveRequest.days_count), 0.0)).where(
-                        LeaveRequest.employee_id == employee_id,
-                        LeaveRequest.status == LeaveRequestStatus.APPROVED,
-                        extract("year", LeaveRequest.start_date) == year,
-                        extract("month", LeaveRequest.start_date) == month,
-                    )
-                )
-                att_leaves = float(lr_res.scalar() or 0.0)
-            leave_days = float(att_leaves)
         off_duty_days = float(
-            override_inputs["off_duty_days"] if override_inputs and "off_duty_days" in override_inputs
-            else (existing.off_duty_days if existing and existing.is_manual_override else 0.0)
+            override_inputs["off_duty_days"] if override_inputs and "off_duty_days" in override_inputs and override_inputs["off_duty_days"] is not None
+            else (existing.off_duty_days if existing and existing.is_manual_override and existing.off_duty_days is not None else 0.0)
         )
         collection = float(
-            override_inputs["collection"] if override_inputs and "collection" in override_inputs
-            else (existing.collection if existing and existing.is_manual_override else 0.0)
+            override_inputs["collection"] if override_inputs and "collection" in override_inputs and override_inputs["collection"] is not None
+            else (existing.collection if existing and existing.is_manual_override and existing.collection is not None else 0.0)
         )
         is_manual_override = bool(
-            override_inputs.get("is_manual_override", True) if override_inputs
+            override_inputs.get("is_manual_override", True) if override_inputs and override_inputs.get("is_manual_override") is not None
             else (existing.is_manual_override if existing else False)
         )
 
-        # ── FORMULA: PAYABLE DAYS & SALARY PART (UNCHANGED) ──────────────────────
+        # ── 4. FORMULA: PAYABLE DAYS & SALARY PART ──────────────────────────────
         per_day = base_salary / days_in_month if days_in_month > 0 else 0.0
         effective_present = min(present_days, float(days_in_month))
-        effective_leave = min(leave_days, paid_leave_cap)
 
-        payable_days = round(effective_present + (half_days * 0.5) + effective_leave + off_duty_days, 2)
+        # Payable Days = Present + (Half * 0.5) + MIN(Total Absences, 3) + Off Duty
+        payable_days = round(effective_present + (half_days * 0.5) + effective_paid_leave + off_duty_days, 2)
         salary_part = round(min(payable_days * per_day, base_salary), 2)
 
-        # ── DEDUCTIONS (LOP & SAVINGS FUND) ────────────────────────────────────
+        # ── 5. DEDUCTIONS (LATENESS LOP & SAVINGS FUND) ──────────────────────────
         gross_salary = round(salary_part + collection, 2)
-        # LOP deduction clamped to salary_part earned
+        # LOP deduction = Late LOP * per_day (unpaid absence is already excluded from payable_days)
         lop_deduction = round(min(lop_days * per_day, salary_part), 2)
 
         # Savings fund deduction: ONLY if gross earnings after LOP can fully cover it
@@ -256,11 +265,9 @@ class PayrollEngine:
             if available_for_fund >= fund_requested:
                 fund_deduction = round(fund_requested, 2)
             else:
-                # Exceeds what is payable -> deduct nothing
                 fund_deduction = 0.0
 
         raw_total_deductions = round(lop_deduction + fund_deduction, 2)
-        # Cap deductions at gross — can't deduct more than earned
         total_deductions = round(min(raw_total_deductions, gross_salary), 2)
         carried_forward_deductions = 0.0
         net_salary = round(max(0.0, gross_salary - total_deductions), 2)
@@ -283,10 +290,10 @@ class PayrollEngine:
             period_id=period.id if period else None,
             total_working_days=days_in_month,
             present_days=present_days,
-            absent_days=max(0.0, float(effective_days_in_month) - present_days - half_days - leave_days),
+            absent_days=absent_days,
             half_days=half_days,
-            leave_days=leave_days,
-            paid_leave_days=effective_leave,
+            leave_days=total_absences,
+            paid_leave_days=effective_paid_leave,
             off_duty_days=off_duty_days,
             qualifying_late_days=qualifying_late_days,
             loss_of_pay_days=loss_of_pay_days,
