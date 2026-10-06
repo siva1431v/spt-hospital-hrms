@@ -202,10 +202,26 @@ class PayrollEngine:
             override_inputs["half_days"] if override_inputs and "half_days" in override_inputs
             else (existing.half_days if existing and existing.is_manual_override else 0.0)
         )
-        leave_days = float(
-            override_inputs["leave_days"] if override_inputs and "leave_days" in override_inputs
-            else (existing.leave_days if existing and existing.is_manual_override else sum(1 for a in attendance_records if a.status == AttendanceStatus.LEAVE))
-        )
+        if override_inputs and "leave_days" in override_inputs and override_inputs["leave_days"] is not None:
+            leave_days = float(override_inputs["leave_days"])
+        elif existing and existing.is_manual_override and existing.leave_days is not None:
+            leave_days = float(existing.leave_days)
+        else:
+            att_leaves = sum(1 for a in attendance_records if a.status == AttendanceStatus.LEAVE)
+            if att_leaves == 0 and monthly_agg and (monthly_agg.leaves_taken or 0) > 0:
+                att_leaves = float(monthly_agg.leaves_taken)
+            if att_leaves == 0:
+                # Check approved leave requests for the month
+                lr_res = await self.db.execute(
+                    select(func.coalesce(func.sum(LeaveRequest.days_count), 0.0)).where(
+                        LeaveRequest.employee_id == employee_id,
+                        LeaveRequest.status == LeaveRequestStatus.APPROVED,
+                        extract("year", LeaveRequest.start_date) == year,
+                        extract("month", LeaveRequest.start_date) == month,
+                    )
+                )
+                att_leaves = float(lr_res.scalar() or 0.0)
+            leave_days = float(att_leaves)
         off_duty_days = float(
             override_inputs["off_duty_days"] if override_inputs and "off_duty_days" in override_inputs
             else (existing.off_duty_days if existing and existing.is_manual_override else 0.0)

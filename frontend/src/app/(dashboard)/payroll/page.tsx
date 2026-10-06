@@ -217,8 +217,11 @@ function PayrollContent() {
         setRecords(recRes.data.items || [])
         setTotalStaff(recRes.data.total || (recRes.data.items || []).length)
       }
+      refresh()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to calculate payroll.'
+      const resp = (err as { response?: { data?: { detail?: string | { message?: string } } } })?.response
+      const detail = resp?.data?.detail
+      const msg = typeof detail === 'string' ? detail : (detail?.message || 'Failed to calculate payroll.')
       alert(msg)
     } finally {
       setCalculating(false)
