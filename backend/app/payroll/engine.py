@@ -167,31 +167,76 @@ class PayrollEngine:
             if (present_days == 0 or not attendance_records) and monthly_agg and monthly_agg.present_count is not None:
                 present_days = float(monthly_agg.present_count)
 
-        if override_inputs and "leave_days" in override_inputs and override_inputs["leave_days"] is not None:
-            leave_days = float(override_inputs["leave_days"])
+        half_days_val = float(
+            override_inputs.get("half_days", 0.0) or 0.0
+            if override_inputs and "half_days" in override_inputs
+            else (existing.half_days if existing and existing.is_manual_override and existing.half_days is not None else 0.0)
+        )
+        if override_inputs and ("leave_days" in override_inputs or "present_days" in override_inputs):
+            leave_days = float(override_inputs.get("leave_days", 0.0) or 0.0)
             absent_days = float(override_inputs.get("absent_days", max(0.0, float(effective_days_in_month) - present_days - leave_days)))
+            if present_days > 0 or half_days_val > 0 or leave_days > 0:
+                total_absences = absent_days + leave_days
+                effective_paid_leave = min(total_absences, paid_leave_cap)
+                unpaid_absence_days = max(0.0, total_absences - paid_leave_cap)
+            else:
+                total_absences = 0.0
+                effective_paid_leave = 0.0
+                unpaid_absence_days = 0.0
         elif existing and existing.is_manual_override and existing.leave_days is not None:
             leave_days = float(existing.leave_days)
             absent_days = float(existing.absent_days if existing.absent_days is not None else max(0.0, float(effective_days_in_month) - present_days - leave_days))
+            if present_days > 0 or half_days_val > 0 or leave_days > 0:
+                total_absences = absent_days + leave_days
+                effective_paid_leave = min(total_absences, paid_leave_cap)
+                unpaid_absence_days = max(0.0, total_absences - paid_leave_cap)
+            else:
+                total_absences = 0.0
+                effective_paid_leave = 0.0
+                unpaid_absence_days = 0.0
         else:
-            if attendance_records:
+            has_no_data = any(a.status == AttendanceStatus.NO_DATA for a in attendance_records)
+            has_punches = any((getattr(a, "work_minutes", 0) or 0) > 0 or getattr(a, "check_in_datetime", None) is not None for a in attendance_records)
+            is_zero_punch_report = (monthly_agg and monthly_agg.has_zero_punches) or (bool(attendance_records) and not has_punches)
+
+            if has_no_data:
+                absent_days = float(sum(1 for a in attendance_records if a.status == AttendanceStatus.ABSENT))
+                leave_days = float(sum(1 for a in attendance_records if a.status == AttendanceStatus.LEAVE) + approved_lr_days)
+            elif attendance_records:
                 absent_count_att = sum(1 for a in attendance_records if a.status == AttendanceStatus.ABSENT)
                 leave_count_att = sum(1 for a in attendance_records if a.status == AttendanceStatus.LEAVE)
-                absent_days = float(absent_count_att)
-                leave_days = float(leave_count_att + approved_lr_days)
+                is_mid_month_joiner_without_full_month = (
+                    employee.joining_date
+                    and employee.joining_date > date(year, month, 1)
+                    and len(attendance_records) < effective_days_in_month
+                )
+                if is_mid_month_joiner_without_full_month:
+                    leave_days = float(leave_count_att + approved_lr_days)
+                    absent_days = max(0.0, float(effective_days_in_month) - present_days - leave_days)
+                else:
+                    absent_days = float(absent_count_att)
+                    leave_days = float(leave_count_att + approved_lr_days)
             elif monthly_agg:
                 absent_days = float(monthly_agg.absent_count or 0)
                 leave_days = float((monthly_agg.leaves_taken or 0) + approved_lr_days)
             else:
-                absent_days = max(0.0, float(effective_days_in_month) - present_days)
+                absent_days = 0.0
                 leave_days = approved_lr_days
 
-        # First 3 days of absence / leave are paid
-        # Paid Leave = MIN(absent_days + leave_days, 3)
-        # Unpaid Absence LOP = MAX((absent_days + leave_days) - 3, 0)
-        total_absences = absent_days + leave_days
-        effective_paid_leave = min(total_absences, paid_leave_cap)
-        unpaid_absence_days = max(0.0, total_absences - paid_leave_cap)
+            if not attendance_records and not monthly_agg and approved_lr_days == 0:
+                effective_paid_leave = 0.0
+                unpaid_absence_days = 0.0
+                total_absences = 0.0
+            elif is_zero_punch_report or (monthly_agg and (monthly_agg.leaves_taken or 0) == 0 and (monthly_agg.absent_count or 0) > 0):
+                # In basic monthly status reports or monthly aggregates without explicit leaves, absences represent employee leave
+                total_absences = absent_days + leave_days
+                effective_paid_leave = min(total_absences, paid_leave_cap)
+                unpaid_absence_days = max(0.0, total_absences - paid_leave_cap)
+            else:
+                # In punch reports, only approved leaves / leave status count as leave
+                total_absences = leave_days
+                effective_paid_leave = min(leave_days, paid_leave_cap)
+                unpaid_absence_days = max(0.0, leave_days - paid_leave_cap)
 
         # 3. Lateness LOP: 3 late arrivals = 1 LOP day (Late LOP = floor(late_count / 3))
         if override_inputs and "qualifying_late_days" in override_inputs and override_inputs["qualifying_late_days"] is not None:
@@ -204,32 +249,61 @@ class PayrollEngine:
             late_lop_days = float(existing.lop_days)
             qualifying_late_days = int(existing.qualifying_late_days if existing.qualifying_late_days is not None else late_lop_days * late_days_per_lop)
         elif monthly_agg:
-            qualifying_late_days = int(monthly_agg.late_by_days if monthly_agg.late_by_days is not None else (monthly_agg.late_days_qualifying or 0))
-            late_lop_days = float(qualifying_late_days // late_days_per_lop)
+            if monthly_agg.has_zero_punches:
+                qualifying_late_days = 0
+                late_lop_days = 0.0
+            else:
+                qualifying_late_days = int(monthly_agg.late_by_days if monthly_agg.late_by_days is not None else (monthly_agg.late_days_qualifying or 0))
+                late_lop_days = float(qualifying_late_days // late_days_per_lop)
         else:
-            att_late_result = await self.db.execute(
-                select(Attendance).where(
-                    Attendance.employee_id == employee_id,
-                    extract("year", Attendance.attendance_date) == year,
-                    extract("month", Attendance.attendance_date) == month,
-                    Attendance.is_late == True,
+            # Check if attendance records contain any actual punches
+            has_actual_punches = any(
+                (getattr(a, "work_minutes", 0) or 0) > 0 or getattr(a, "check_in_datetime", None) is not None
+                for a in attendance_records
+            )
+            if not has_actual_punches and attendance_records:
+                qualifying_late_days = 0
+                late_lop_days = 0.0
+            else:
+                att_late_result = await self.db.execute(
+                    select(Attendance).where(
+                        Attendance.employee_id == employee_id,
+                        extract("year", Attendance.attendance_date) == year,
+                        extract("month", Attendance.attendance_date) == month,
+                        Attendance.is_late == True,
+                    )
                 )
-            )
-            late_records = att_late_result.scalars().all()
-            emp_grace = employee.shift.grace_period_minutes if (employee.shift and employee.shift.grace_period_minutes is not None) else grace_period
-            qualifying_late_days = sum(
-                1 for a in late_records
-                if getattr(a, "late_minutes", 0) > emp_grace or getattr(a, "is_late", False)
-            )
-            late_lop_days = float(qualifying_late_days // late_days_per_lop)
+                late_records = att_late_result.scalars().all()
+                emp_grace = employee.shift.grace_period_minutes if (employee.shift and employee.shift.grace_period_minutes is not None) else grace_period
+                qualifying_late_days = sum(
+                    1 for a in late_records
+                    if getattr(a, "late_minutes", 0) > emp_grace or getattr(a, "is_late", False)
+                )
+                late_lop_days = float(qualifying_late_days // late_days_per_lop)
 
         lop_days = late_lop_days
         loss_of_pay_days = lop_days
 
         # Additional inputs (override > existing > default)
+        if attendance_records:
+            holiday_days = float(sum(1 for a in attendance_records if a.status == AttendanceStatus.HOLIDAY))
+            weekly_off_days = float(sum(1 for a in attendance_records if a.status == AttendanceStatus.WEEKLY_OFF))
+            weekly_off_present_days = float(sum(1 for a in attendance_records if a.status == AttendanceStatus.WEEKLY_OFF_PRESENT))
+            half_days_detected = float(sum(1 for a in attendance_records if a.status == AttendanceStatus.HALF_DAY))
+        elif monthly_agg:
+            holiday_days = float(monthly_agg.holidays_count or 0)
+            weekly_off_days = float(monthly_agg.weekly_off_count or 0)
+            weekly_off_present_days = 0.0
+            half_days_detected = 0.0
+        else:
+            holiday_days = 0.0
+            weekly_off_days = 0.0
+            weekly_off_present_days = 0.0
+            half_days_detected = 0.0
+
         half_days = float(
             override_inputs["half_days"] if override_inputs and "half_days" in override_inputs and override_inputs["half_days"] is not None
-            else (existing.half_days if existing and existing.is_manual_override and existing.half_days is not None else 0.0)
+            else (existing.half_days if existing and existing.is_manual_override and existing.half_days is not None else half_days_detected)
         )
         off_duty_days = float(
             override_inputs["off_duty_days"] if override_inputs and "off_duty_days" in override_inputs and override_inputs["off_duty_days"] is not None
@@ -248,8 +322,13 @@ class PayrollEngine:
         per_day = base_salary / days_in_month if days_in_month > 0 else 0.0
         effective_present = min(present_days, float(days_in_month))
 
-        # Payable Days = Present + (Half * 0.5) + MIN(Total Absences, 3) + Off Duty
-        payable_days = round(effective_present + (half_days * 0.5) + effective_paid_leave + off_duty_days, 2)
+        # Payable Days = Present + (Half * 0.5) + MIN(Total Absences, 3) + Holiday + Weekly Off + Weekly Off Present + Off Duty
+        # Capped by effective days in month for joiners/exiters
+        raw_payable = effective_present + (half_days * 0.5) + effective_paid_leave + holiday_days + weekly_off_days + weekly_off_present_days + off_duty_days
+        if effective_days_in_month < days_in_month:
+            payable_days = round(min(raw_payable, float(effective_days_in_month)), 2)
+        else:
+            payable_days = round(raw_payable, 2)
         salary_part = round(min(payable_days * per_day, base_salary), 2)
 
         # ── 5. DEDUCTIONS (LATENESS LOP & SAVINGS FUND) ──────────────────────────
@@ -339,6 +418,9 @@ class PayrollEngine:
         """Calculate payroll for all active employees for the given period."""
         from sqlalchemy import delete
         from app.models.payroll import PayrollItem
+
+        if period.status == PayrollStatus.FINALIZED:
+            raise ValueError(f"Cannot recalculate finalized payroll for {period.period_name}.")
 
         # Clean up records for any inactive employees in this unfinalized period
         inactive_rec_res = await self.db.execute(

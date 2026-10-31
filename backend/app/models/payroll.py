@@ -130,7 +130,7 @@ class PayrollPeriod(Base):
     )
 
     payroll_records: Mapped[list["PayrollRecord"]] = relationship(
-        "PayrollRecord", back_populates="period"
+        "PayrollRecord", back_populates="period", cascade="all, delete-orphan"
     )
     finalized_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[finalized_by_id])  # type: ignore[name-defined]
     created_by: Mapped["User"] = relationship("User", foreign_keys=[created_by_id])  # type: ignore[name-defined]

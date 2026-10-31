@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import {
   Upload,
   FileText,
@@ -9,6 +10,15 @@ import {
   AlertTriangle,
   Loader2,
   ArrowRight,
+  ShieldAlert,
+  UserCheck,
+  UserPlus,
+  UserX,
+  ExternalLink,
+  Calculator,
+  Calendar,
+  Layers,
+  HelpCircle,
 } from 'lucide-react'
 import api from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -39,6 +49,30 @@ interface MonthlyAggregatePreview {
   total_ot?: string
 }
 
+export interface ReviewRowItem {
+  company: string
+  employee_code: string
+  employee_name: string
+  pdf_department: string
+  status: 'MATCHED' | 'NAME_MISMATCH' | 'NEW_EMPLOYEE' | 'DUPLICATE_SUSPECT'
+  default_action: 'link' | 'create' | 'ignore'
+  save_as_alias: boolean
+  matched_employee_id: number | null
+  matched_employee_name: string | null
+  summary: {
+    P: number
+    A: number
+    L: number
+    H: number
+    HP: number
+    WO: number
+    WOP: number
+    NO_DATA: number
+  }
+  checksum_valid: boolean
+  checksum_errors: string[]
+}
+
 interface ImportPreviewData {
   session_token?: string
   _temp_path?: string
@@ -47,6 +81,15 @@ interface ImportPreviewData {
   company_name?: string
   date_range_start?: string
   date_range_end?: string
+  period_year?: number
+  period_month?: number
+  period_name?: string
+  is_payroll_finalized?: boolean
+  payroll_finalized_reason?: string
+  attendance_already_exists?: boolean
+  existing_attendance_count?: number
+  existing_attendance_message?: string
+  review_rows?: ReviewRowItem[]
   is_duplicate_file?: boolean
   existing_import?: {
     id: number
@@ -86,6 +129,12 @@ interface ImportSummaryData {
   status?: string
 }
 
+interface ReviewActionState {
+  action: 'link' | 'create' | 'ignore'
+  employee_id: number | null
+  save_as_alias: boolean
+}
+
 export default function ImportPdfWizardPage() {
   const router = useRouter()
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1)
@@ -96,6 +145,7 @@ export default function ImportPdfWizardPage() {
 
   const [uploading, setUploading] = useState(false)
   const [committing, setCommitting] = useState(false)
+  const [calculatingPayroll, setCalculatingPayroll] = useState(false)
   const [duplicateHandling, setDuplicateHandling] = useState<'SKIP' | 'OVERWRITE'>('SKIP')
   const [importSummary, setImportSummary] = useState<ImportSummaryData | null>(null)
 
@@ -103,6 +153,10 @@ export default function ImportPdfWizardPage() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [employeeMappings, setEmployeeMappings] = useState<{ [code: string]: string }>({})
   const [departmentMappings, setDepartmentMappings] = useState<{ [name: string]: string }>({})
+
+  // Review table actions for basic status reports
+  const [reviewActions, setReviewActions] = useState<{ [key: string]: ReviewActionState }>({})
+  const [reviewFilter, setReviewFilter] = useState<'ALL' | 'MATCHED' | 'NAME_MISMATCH' | 'NEW_EMPLOYEE' | 'DUPLICATE_SUSPECT'>('ALL')
 
   // Step 1: File selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -128,17 +182,34 @@ export default function ImportPdfWizardPage() {
       // Fetch active employees and departments
       const [empRes, deptRes] = await Promise.all([
         api.get('/employees?page_size=1000'),
-        api.get('/departments?is_active=true')
+        api.get('/departments?is_active=true'),
       ])
 
       setEmployees(empRes.data.items || [])
       setDepartments(deptRes.data.items || [])
 
-      setPreviewData(response.data)
-      setSessionToken(response.data.session_token || response.data._temp_path || 'valid')
+      const data: ImportPreviewData = response.data
+      setPreviewData(data)
+      setSessionToken(data.session_token || data._temp_path || 'valid')
 
-      if (response.data.statistics?.total_records === 0) {
-        alert("Warning: The eSSL PDF parser extracted 0 attendance records from this file. Please verify that the PDF is a valid eSSL attendance report (Daily Attendance Report or Monthly Status Report).")
+      // Initialize reviewActions if review_rows present
+      if (data.review_rows && data.review_rows.length > 0) {
+        const initialMap: { [key: string]: ReviewActionState } = {}
+        data.review_rows.forEach((row) => {
+          const key = `${row.company}_${row.employee_code}`
+          initialMap[key] = {
+            action: row.default_action,
+            employee_id: row.matched_employee_id,
+            save_as_alias: row.save_as_alias,
+          }
+        })
+        setReviewActions(initialMap)
+      }
+
+      if (data.statistics?.total_records === 0 && (!data.review_rows || data.review_rows.length === 0)) {
+        alert(
+          'Warning: The eSSL PDF parser extracted 0 attendance records from this file. Please verify that the PDF is a valid eSSL attendance report.'
+        )
       }
 
       setStep(3)
@@ -151,19 +222,53 @@ export default function ImportPdfWizardPage() {
     }
   }
 
+  // Update a single row's action
+  const updateReviewAction = (key: string, updates: Partial<ReviewActionState>) => {
+    setReviewActions((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || { action: 'link', employee_id: null, save_as_alias: false }),
+        ...updates,
+      },
+    }))
+  }
+
   // Step 4: Commit Import
   const handleConfirmCommit = async () => {
     if (!previewData) return
+    if (previewData.is_payroll_finalized) {
+      alert(`Cannot import attendance: Payroll for ${previewData.period_name || 'this period'} is already finalized.`)
+      return
+    }
+
     setCommitting(true)
     setStep(4)
 
     try {
+      // Serialize review actions
+      const review_actions = (previewData.review_rows || []).map((row) => {
+        const key = `${row.company}_${row.employee_code}`
+        const current = reviewActions[key] || {
+          action: row.default_action,
+          employee_id: row.matched_employee_id,
+          save_as_alias: row.save_as_alias,
+        }
+        return {
+          company: row.company,
+          employee_code: row.employee_code,
+          action: current.action,
+          employee_id: current.employee_id,
+          save_as_alias: current.save_as_alias,
+        }
+      })
+
       const payload = {
         ...previewData,
         session_token: sessionToken || previewData.session_token,
         duplicate_action: duplicateHandling.toLowerCase(),
         employee_mappings: employeeMappings,
         department_mappings: departmentMappings,
+        review_actions: review_actions,
       }
       const response = await api.post('/attendance/import/commit', payload)
 
@@ -178,14 +283,59 @@ export default function ImportPdfWizardPage() {
     }
   }
 
+  // Calculate payroll on success
+  const handleCalculatePayroll = async () => {
+    if (!previewData?.period_year || !previewData?.period_month) {
+      router.push('/payroll')
+      return
+    }
+    setCalculatingPayroll(true)
+    try {
+      await api.post('/payroll/periods/calculate', {
+        year: previewData.period_year,
+        month: previewData.period_month,
+      })
+      router.push(`/payroll?year=${previewData.period_year}&month=${previewData.period_month}`)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || 'Payroll calculated or redirected.')
+      router.push(`/payroll?year=${previewData.period_year}&month=${previewData.period_month}`)
+    } finally {
+      setCalculatingPayroll(false)
+    }
+  }
+
+  // Filtered review rows
+  const filteredReviewRows = (previewData?.review_rows || []).filter((row) => {
+    if (reviewFilter === 'ALL') return true
+    return row.status === reviewFilter
+  })
+
+  const reviewCounts = {
+    all: previewData?.review_rows?.length || 0,
+    matched: previewData?.review_rows?.filter((r) => r.status === 'MATCHED').length || 0,
+    mismatch: previewData?.review_rows?.filter((r) => r.status === 'NAME_MISMATCH').length || 0,
+    newStaff: previewData?.review_rows?.filter((r) => r.status === 'NEW_EMPLOYEE').length || 0,
+    dups: previewData?.review_rows?.filter((r) => r.status === 'DUPLICATE_SUSPECT').length || 0,
+  }
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       {/* Page Title */}
-      <div className="border-b border-slate-200/80 pb-5">
-        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">eSSL PDF Attendance Import Wizard</h1>
-        <p className="text-xs text-slate-500 mt-1">
-          Upload real hospital eSSL PDF attendance reports to parse punch times, overnight shifts, and OT
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/80 pb-5">
+        <div>
+          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">eSSL PDF Attendance Import Wizard</h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Upload hospital eSSL biometric PDF attendance reports (Monthly Status Report or Daily Punch Detail)
+          </p>
+        </div>
+        <Link
+          href="/docs/monthly-import"
+          className="inline-flex items-center gap-1.5 text-xs text-teal-700 hover:text-teal-800 font-semibold bg-teal-50 px-3 py-1.5 rounded-lg border border-teal-200"
+        >
+          <HelpCircle className="w-3.5 h-3.5" />
+          Import Guide & FAQs
+        </Link>
       </div>
 
       {/* Stepper Progress */}
@@ -193,7 +343,7 @@ export default function ImportPdfWizardPage() {
         {[
           { num: 1, label: 'Upload PDF' },
           { num: 2, label: 'Parsing' },
-          { num: 3, label: 'Review & Mapping' },
+          { num: 3, label: 'Review & Verify' },
           { num: 4, label: 'Committing' },
           { num: 5, label: 'Import Complete' },
         ].map((s, idx) => (
@@ -241,7 +391,7 @@ export default function ImportPdfWizardPage() {
                   {selectedFile ? selectedFile.name : 'Click to select eSSL Attendance PDF'}
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Supports eSSL standard PDF attendance log files (up to 50MB)
+                  Supports eSSL standard Monthly Status Reports and Daily Punch Log PDFs (up to 50MB)
                 </p>
               </div>
             </label>
@@ -273,7 +423,7 @@ export default function ImportPdfWizardPage() {
           <Loader2 className="w-10 h-10 text-teal-600 animate-spin mx-auto" />
           <h2 className="text-base font-bold text-slate-900">Analyzing eSSL PDF Report Structure...</h2>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            Extracting company header, date range blocks, employee biometric codes, punch times, and calculating OT.
+            Detecting period date range from header, mapping coordinate columns, computing row checksums, and matching staff biometric codes.
           </p>
         </div>
       )}
@@ -281,289 +431,399 @@ export default function ImportPdfWizardPage() {
       {/* STEP 3: Preview & Record Validation */}
       {step === 3 && previewData && (
         <div className="space-y-6">
-          {/* Metadata Card */}
-          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Report Metadata & Summary</h2>
-            {previewData.report_type && (
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-800 text-xs font-bold border border-indigo-200">
-                <FileText className="w-3.5 h-3.5" />
-                Detected Format: {previewData.report_type}
-              </div>
-            )}
-
-            {previewData.is_duplicate_file && previewData.existing_import && (
-              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs space-y-1">
-                <div className="flex items-center gap-1.5 font-bold text-amber-900">
-                  <AlertTriangle className="w-4 h-4 text-amber-600" />
-                  <span>Exact File Previously Imported</span>
+          {/* Month Detection Banner */}
+          {previewData.period_name && (
+            <div className="p-4 bg-teal-50/80 rounded-xl border border-teal-200 flex items-start gap-3 text-xs">
+              <Calendar className="w-5 h-5 text-teal-700 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-teal-900 text-sm">Detected PDF Period: {previewData.period_name}</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-200/80 text-teal-900">
+                    Header Source of Truth
+                  </span>
                 </div>
-                <p className="text-amber-800">
-                  This file was previously imported on{' '}
-                  <strong>{previewData.existing_import.imported_at ? new Date(previewData.existing_import.imported_at).toLocaleString('en-IN') : 'a prior date'}</strong>{' '}
-                  (Import #{previewData.existing_import.id} &bull; {previewData.existing_import.records_imported} imported, {previewData.existing_import.records_duplicate} duplicates).
-                  Select <strong>&ldquo;Skip existing records&rdquo;</strong> to prevent changes or <strong>&ldquo;Overwrite existing DB records&rdquo;</strong> to re-apply punches.
+                <p className="text-teal-800">
+                  Extracted date range: <strong>{previewData.date_range_start}</strong> to <strong>{previewData.date_range_end}</strong>.
+                  All attendance records and payroll calculations will be linked to <strong>{previewData.period_name}</strong> regardless of the current system month.
                 </p>
               </div>
-            )}
+            </div>
+          )}
+
+          {/* Finalized Period Blocker Warning */}
+          {previewData.is_payroll_finalized && (
+            <div className="p-4 bg-rose-50 rounded-xl border border-rose-200 flex items-start gap-3 text-xs text-rose-900">
+              <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-bold text-sm">Import Blocked — Payroll Finalized</span>
+                <p className="text-rose-800">
+                  {previewData.payroll_finalized_reason ||
+                    `The payroll period for ${previewData.period_name} has already been locked and finalized. Attendance records cannot be overwritten for finalized payroll.`}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Existing Attendance Alert */}
+          {previewData.attendance_already_exists && !previewData.is_payroll_finalized && (
+            <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-start gap-3 text-xs text-amber-900">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-bold text-sm">Existing Attendance Records Detected</span>
+                <p className="text-amber-800">
+                  {previewData.existing_attendance_message ||
+                    `Found ${previewData.existing_attendance_count} existing attendance records for ${previewData.period_name}. Proceeding will cleanly replace them for this period without creating duplicates.`}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Metadata Card */}
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Report Metadata & Detection</h2>
+              {previewData.report_type && (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-50 text-indigo-800 text-xs font-bold border border-indigo-200">
+                  <Layers className="w-3.5 h-3.5" />
+                  Format: {previewData.report_type}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-100 text-xs">
               <div>
                 <span className="text-slate-400 font-medium">Company Name:</span>
                 <p className="font-semibold text-slate-900">{previewData.company_name || 'SPT Hospital'}</p>
               </div>
               <div>
-                <span className="text-slate-400 font-medium">Date Range:</span>
+                <span className="text-slate-400 font-medium">Period:</span>
                 <p className="font-semibold text-slate-900">
-                  {previewData.date_range_start} to {previewData.date_range_end}
+                  {previewData.period_name || `${previewData.date_range_start} to ${previewData.date_range_end}`}
                 </p>
               </div>
               <div>
-                <span className="text-slate-400 font-medium">Total Attendance Records:</span>
-                <p className="font-semibold text-teal-700 text-sm">{previewData.statistics?.total_records}</p>
+                <span className="text-slate-400 font-medium">Staff Rows Detected:</span>
+                <p className="font-semibold text-teal-700 text-sm">
+                  {previewData.review_rows?.length || previewData.statistics?.total_records || 0}
+                </p>
               </div>
               <div>
-                <span className="text-slate-400 font-medium">Duplicates Detected:</span>
-                <p className="font-semibold text-amber-600 text-sm">{previewData.statistics?.duplicate}</p>
+                <span className="text-slate-400 font-medium">Punch Times Availability:</span>
+                <p className="font-semibold text-slate-700 text-xs mt-0.5">
+                  {previewData.report_type?.includes('Monthly Status Report')
+                    ? 'Status Codes (No punch times)'
+                    : 'Punch In/Out Times Available'}
+                </p>
               </div>
-            </div>
-
-            {/* Duplicate Settings */}
-            <div className="flex items-center gap-4 pt-2">
-              <span className="text-xs font-semibold text-slate-700">Duplicate Handling Strategy:</span>
-              <label className="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
-                <input
-                  type="radio"
-                  name="dups"
-                  value="SKIP"
-                  checked={duplicateHandling === 'SKIP'}
-                  onChange={() => setDuplicateHandling('SKIP')}
-                  className="text-teal-600"
-                />
-                Skip existing records (Recommended)
-              </label>
-              <label className="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
-                <input
-                  type="radio"
-                  name="dups"
-                  value="OVERWRITE"
-                  checked={duplicateHandling === 'OVERWRITE'}
-                  onChange={() => setDuplicateHandling('OVERWRITE')}
-                  className="text-teal-600"
-                />
-                Overwrite existing DB records
-              </label>
             </div>
           </div>
 
-          {/* MAPPING SECTIONS */}
-          {((previewData.unknown_employee_codes && previewData.unknown_employee_codes.length > 0) ||
-            (previewData.unknown_department_names && previewData.unknown_department_names.length > 0) ||
-            (previewData.unmapped_shift_codes && previewData.unmapped_shift_codes.length > 0)) && (
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-6">
-              <h2 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2 uppercase tracking-wider">
-                Review Mappings & Resolve Conflicts
-              </h2>
-
-              {previewData.unmapped_shift_codes && previewData.unmapped_shift_codes.length > 0 && (
-                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs space-y-1">
-                  <div className="flex items-center gap-1.5 font-bold text-amber-900">
-                    <AlertTriangle className="w-4 h-4 text-amber-600" />
-                    <span>Unmapped Shift Codes Found in PDF ({previewData.unmapped_shift_codes.length})</span>
-                  </div>
-                  <p className="text-amber-800 text-[11px]">
-                    The following shift codes from the device have no mapping: <strong className="font-mono">{previewData.unmapped_shift_codes.join(', ')}</strong>. You can configure alias rules under <strong>Shifts</strong> page.
+          {/* STEP 3 REVIEW SCREEN: Biometric Code Review Table */}
+          {previewData.review_rows && previewData.review_rows.length > 0 && (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden space-y-4 p-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <UserCheck className="w-4 h-4 text-teal-600" />
+                    Biometric Code Matching & Review Screen ({previewData.review_rows.length} Staff)
+                  </h2>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Review how PDF biometric rows map to employee master records. Department source of truth is always the employee master.
                   </p>
                 </div>
-              )}
 
-              {previewData.unknown_department_names && previewData.unknown_department_names.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-amber-600" />
-                    Unmapped Departments ({previewData.unknown_department_names.length})
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    The following department names from the PDF do not exist in the database. Map them to an existing department:
-                  </p>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {previewData.unknown_department_names.map((deptName: string) => (
-                      <div key={deptName} className="flex flex-col gap-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                        <span className="text-xs font-semibold text-slate-700 font-mono">{deptName}</span>
-                        <select
-                          value={departmentMappings[deptName] || ''}
-                          onChange={(e) =>
-                            setDepartmentMappings({
-                              ...departmentMappings,
-                              [deptName]: e.target.value,
-                            })
-                          }
-                          className="h-8 text-xs bg-white border border-slate-200 rounded px-2 mt-1 w-full"
-                        >
-                          <option value="">-- Choose Existing Department --</option>
-                          {departments.map((d: Department) => (
-                            <option key={d.id} value={d.id}>
-                              {d.name} ({d.code})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ))}
-                  </div>
+                {/* Status Filter Badges */}
+                <div className="flex flex-wrap gap-1.5 text-xs">
+                  <button
+                    onClick={() => setReviewFilter('ALL')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
+                      reviewFilter === 'ALL'
+                        ? 'bg-slate-800 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    All ({reviewCounts.all})
+                  </button>
+                  <button
+                    onClick={() => setReviewFilter('MATCHED')}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
+                      reviewFilter === 'MATCHED'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                    }`}
+                  >
+                    Matched ({reviewCounts.matched})
+                  </button>
+                  {reviewCounts.mismatch > 0 && (
+                    <button
+                      onClick={() => setReviewFilter('NAME_MISMATCH')}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
+                        reviewFilter === 'NAME_MISMATCH'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
+                      }`}
+                    >
+                      Mismatches ({reviewCounts.mismatch})
+                    </button>
+                  )}
+                  {reviewCounts.newStaff > 0 && (
+                    <button
+                      onClick={() => setReviewFilter('NEW_EMPLOYEE')}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
+                        reviewFilter === 'NEW_EMPLOYEE'
+                          ? 'bg-sky-600 text-white'
+                          : 'bg-sky-50 text-sky-800 hover:bg-sky-100'
+                      }`}
+                    >
+                      New Staff ({reviewCounts.newStaff})
+                    </button>
+                  )}
+                  {reviewCounts.dups > 0 && (
+                    <button
+                      onClick={() => setReviewFilter('DUPLICATE_SUSPECT')}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
+                        reviewFilter === 'DUPLICATE_SUSPECT'
+                          ? 'bg-rose-600 text-white'
+                          : 'bg-rose-50 text-rose-800 hover:bg-rose-100'
+                      }`}
+                    >
+                      Duplicate Suspects ({reviewCounts.dups})
+                    </button>
+                  )}
                 </div>
-              )}
+              </div>
 
-              {previewData.unknown_employee_codes && previewData.unknown_employee_codes.length > 0 && (
-                <div className="space-y-3 pt-4 border-t border-slate-100">
-                  <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-rose-500" />
-                    Unmapped Employee Biometric Codes ({previewData.unknown_employee_codes.length})
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    These biometric codes from the PDF are not registered in any employee profile. Map them to register their attendance:
-                  </p>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {previewData.unknown_employee_codes.map((code: string) => {
-                      const matchingRecord = previewData.records?.find((r: PreviewRecord) => r.employee_code === code)
-                      const pdfName = matchingRecord ? matchingRecord.employee_name : 'Unknown'
-                      return (
-                        <div key={code} className="flex flex-col gap-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                          <div className="flex justify-between items-center text-xs">
-                            <span className="font-bold text-slate-800 font-mono">Code: {code}</span>
-                            <span className="text-slate-400">({pdfName})</span>
+              {/* Review Rows Table */}
+              <div className="max-h-[28rem] overflow-y-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[10px] sticky top-0 z-10">
+                    <tr>
+                      <th className="p-2.5">Device & Code</th>
+                      <th className="p-2.5">PDF Employee</th>
+                      <th className="p-2.5">Status</th>
+                      <th className="p-2.5">Attendance Counts</th>
+                      <th className="p-2.5">Action</th>
+                      <th className="p-2.5 text-center">Save Alias</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-[11px]">
+                    {filteredReviewRows.map((row) => {
+                      const key = `${row.company}_${row.employee_code}`
+                      const currentAction = reviewActions[key] || {
+                        action: row.default_action,
+                        employee_id: row.matched_employee_id,
+                        save_as_alias: row.save_as_alias,
+                      }
+
+                      let statusBadge = (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          Matched
+                        </span>
+                      )
+
+                      if (row.status === 'NAME_MISMATCH') {
+                        statusBadge = (
+                          <div className="space-y-0.5">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                              Name Mismatch
+                            </span>
+                            <div className="text-[10px] text-amber-700">Master: {row.matched_employee_name}</div>
                           </div>
-                          <select
-                            value={employeeMappings[code] || ''}
-                            onChange={(e) =>
-                              setEmployeeMappings({
-                                ...employeeMappings,
-                                [code]: e.target.value,
-                              })
-                            }
-                            className="h-8 text-xs bg-white border border-slate-200 rounded px-2 mt-1 w-full"
-                          >
-                            <option value="">-- Choose Existing Employee --</option>
-                            {employees.map((emp: Employee) => (
-                              <option key={emp.id} value={emp.id}>
-                                {emp.full_name} ({emp.employee_id})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                        )
+                      } else if (row.status === 'NEW_EMPLOYEE') {
+                        statusBadge = (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-50 text-sky-800 border border-sky-200">
+                            New Employee
+                          </span>
+                        )
+                      } else if (row.status === 'DUPLICATE_SUSPECT') {
+                        statusBadge = (
+                          <div className="space-y-0.5">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-800 border border-rose-200">
+                              Duplicate Suspect
+                            </span>
+                            <div className="text-[10px] text-rose-700">Old Bio all-absent duplicate</div>
+                          </div>
+                        )
+                      }
+
+                      const rowBg =
+                        row.status === 'DUPLICATE_SUSPECT'
+                          ? 'bg-rose-50/30'
+                          : row.status === 'NAME_MISMATCH'
+                          ? 'bg-amber-50/20'
+                          : row.status === 'NEW_EMPLOYEE'
+                          ? 'bg-sky-50/20'
+                          : 'hover:bg-slate-50/60'
+
+                      return (
+                        <tr key={key} className={rowBg}>
+                          <td className="p-2.5">
+                            <div className="flex items-center gap-1.5 font-mono font-bold text-slate-900">
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-sans ${
+                                  row.company === 'Old Bio'
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : 'bg-teal-100 text-teal-800'
+                                }`}
+                              >
+                                {row.company}
+                              </span>
+                              #{row.employee_code}
+                            </div>
+                          </td>
+
+                          <td className="p-2.5">
+                            <div className="font-semibold text-slate-900">{row.employee_name}</div>
+                            <div className="text-[10px] text-slate-400">PDF Dept: {row.pdf_department || '—'}</div>
+                          </td>
+
+                          <td className="p-2.5">{statusBadge}</td>
+
+                          <td className="p-2.5 font-mono text-[10px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-emerald-700 font-bold">P:{row.summary.P}</span>
+                              <span className="text-rose-600 font-bold">A:{row.summary.A}</span>
+                              {row.summary.HP > 0 && <span className="text-amber-700">HP:{row.summary.HP}</span>}
+                              {row.summary.L > 0 && <span className="text-blue-700">L:{row.summary.L}</span>}
+                              {row.summary.H > 0 && <span className="text-purple-700">H:{row.summary.H}</span>}
+                              {row.summary.WO > 0 && <span className="text-slate-600">WO:{row.summary.WO}</span>}
+                              {row.summary.NO_DATA > 0 && (
+                                <span className="text-slate-400">NoData:{row.summary.NO_DATA}</span>
+                              )}
+                            </div>
+                            {row.checksum_errors && row.checksum_errors.length > 0 && (
+                              <div className="text-[9px] text-rose-600 mt-0.5">{row.checksum_errors.join('; ')}</div>
+                            )}
+                          </td>
+
+                          <td className="p-2.5">
+                            <div className="space-y-1">
+                              <select
+                                value={currentAction.action}
+                                onChange={(e) =>
+                                  updateReviewAction(key, {
+                                    action: e.target.value as 'link' | 'create' | 'ignore',
+                                  })
+                                }
+                                className="h-7 text-xs bg-white border border-slate-200 rounded px-1.5 w-full"
+                              >
+                                <option value="link">Link to Employee</option>
+                                <option value="create">Create New Employee</option>
+                                <option value="ignore">Ignore Row</option>
+                              </select>
+
+                              {currentAction.action === 'link' && (
+                                <select
+                                  value={currentAction.employee_id || ''}
+                                  onChange={(e) =>
+                                    updateReviewAction(key, {
+                                      employee_id: e.target.value ? Number(e.target.value) : null,
+                                    })
+                                  }
+                                  className="h-7 text-[11px] bg-slate-50 border border-slate-200 rounded px-1.5 w-full"
+                                >
+                                  <option value="">-- Choose Employee --</option>
+                                  {employees.map((emp) => (
+                                    <option key={emp.id} value={emp.id}>
+                                      {emp.full_name} ({emp.biometric_code || emp.employee_id})
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="p-2.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={currentAction.save_as_alias}
+                              onChange={(e) =>
+                                updateReviewAction(key, {
+                                  save_as_alias: e.target.checked,
+                                })
+                              }
+                              title="Save as alias in device_code_aliases for automatic resolution in future months"
+                              className="rounded text-teal-600"
+                            />
+                          </td>
+                        </tr>
                       )
                     })}
-                  </div>
-                </div>
-              )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
-          {/* Records Table Preview */}
-          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs space-y-3 p-4">
-            <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Record Preview (First 50 Entries)</h2>
-            <div className="max-h-80 overflow-y-auto border border-slate-100 rounded-lg">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[10px]">
-                  <tr>
-                    <th className="p-2.5">Date</th>
-                    <th className="p-2.5">Emp Code</th>
-                    <th className="p-2.5">Name</th>
-                    <th className="p-2.5">Dept</th>
-                    <th className="p-2.5">In</th>
-                    <th className="p-2.5">Out</th>
-                    <th className="p-2.5">Status</th>
-                    <th className="p-2.5">Validation</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                  {previewData.records?.map((rec: PreviewRecord, idx: number) => {
-                    const hasError = rec.is_unknown_employee || (rec.errors && rec.errors.length > 0)
-                    const isDup = rec.is_duplicate
-                    const isUnknownDept = rec.is_unknown_department
-                    
-                    let rowBg = ''
-                    if (hasError) rowBg = 'bg-rose-50/60'
-                    else if (isDup) rowBg = 'bg-amber-50/60'
-                    else if (isUnknownDept) rowBg = 'bg-orange-50/50'
+          {/* Legacy Unmapped Sections for Punch Detail Reports */}
+          {((previewData.unknown_employee_codes && previewData.unknown_employee_codes.length > 0) ||
+            (previewData.unknown_department_names && previewData.unknown_department_names.length > 0)) &&
+            (!previewData.review_rows || previewData.review_rows.length === 0) && (
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-6">
+                <h2 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-2 uppercase tracking-wider">
+                  Review Mappings & Resolve Conflicts
+                </h2>
 
-                    return (
-                      <tr key={idx} className={rowBg}>
-                        <td className="p-2.5">{rec.attendance_date}</td>
-                        <td className="p-2.5 font-bold text-slate-900">{rec.employee_code}</td>
-                        <td className="p-2.5 font-sans font-medium text-slate-800">{rec.employee_name}</td>
-                        <td className="p-2.5 font-sans text-slate-600">{rec.department_name || 'Default'}</td>
-                        <td className="p-2.5 text-emerald-700">{rec.in_time || '—'}</td>
-                        <td className="p-2.5 text-teal-700">{rec.out_time || '—'}</td>
-                        <td className="p-2.5 font-sans font-semibold">
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700">
-                            {rec.status}
-                          </span>
-                        </td>
-                        <td className="p-2.5 font-sans text-[10px]">
-                          {isDup && <span className="text-amber-700 font-semibold">Duplicate</span>}
-                          {rec.is_unknown_employee && <span className="text-rose-600 font-semibold">New Employee</span>}
-                          {isUnknownDept && <span className="text-orange-600 font-semibold">Unmapped Dept</span>}
-                          {!rec.is_unknown_employee && !isDup && <span className="text-emerald-600 font-semibold">Valid</span>}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {previewData.monthly_aggregates && previewData.monthly_aggregates.length > 0 && (
-              <div className="space-y-3 pt-4 border-t border-slate-200">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    Extracted Monthly Aggregates ({previewData.monthly_aggregates.length} Employees)
-                  </h2>
-                  <span className="text-[11px] text-indigo-700 font-semibold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                    Pre-computed Source Totals
-                  </span>
-                </div>
-                <div className="max-h-60 overflow-y-auto border border-slate-100 rounded-lg">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[10px]">
-                      <tr>
-                        <th className="p-2.5">Code</th>
-                        <th className="p-2.5">Employee Name</th>
-                        <th className="p-2.5">Department</th>
-                        <th className="p-2.5 text-center">Present</th>
-                        <th className="p-2.5 text-center">Absent</th>
-                        <th className="p-2.5 text-center text-amber-700">Late Days</th>
-                        <th className="p-2.5">Total Work</th>
-                        <th className="p-2.5">Total OT</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                      {previewData.monthly_aggregates.slice(0, 50).map((agg: MonthlyAggregatePreview, idx: number) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="p-2.5 font-bold text-slate-900">{agg.employee_code}</td>
-                          <td className="p-2.5 font-sans font-medium text-slate-800">{agg.employee_name}</td>
-                          <td className="p-2.5 font-sans text-slate-600">{agg.department_name}</td>
-                          <td className="p-2.5 text-center text-emerald-600 font-bold">{agg.present_count}</td>
-                          <td className="p-2.5 text-center text-rose-600 font-bold">{agg.absent_count}</td>
-                          <td className="p-2.5 text-center text-amber-700 font-bold">{agg.late_by_days}</td>
-                          <td className="p-2.5">{agg.total_work_duration || '—'}</td>
-                          <td className="p-2.5">{agg.total_ot || '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {previewData.unknown_employee_codes && previewData.unknown_employee_codes.length > 0 && (
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-rose-500" />
+                      Unmapped Employee Biometric Codes ({previewData.unknown_employee_codes.length})
+                    </h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {previewData.unknown_employee_codes.map((code: string) => {
+                        const matchingRecord = previewData.records?.find((r: PreviewRecord) => r.employee_code === code)
+                        const pdfName = matchingRecord ? matchingRecord.employee_name : 'Unknown'
+                        return (
+                          <div key={code} className="flex flex-col gap-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="font-bold text-slate-800 font-mono">Code: {code}</span>
+                              <span className="text-slate-400">({pdfName})</span>
+                            </div>
+                            <select
+                              value={employeeMappings[code] || ''}
+                              onChange={(e) =>
+                                setEmployeeMappings({
+                                  ...employeeMappings,
+                                  [code]: e.target.value,
+                                })
+                              }
+                              className="h-8 text-xs bg-white border border-slate-200 rounded px-2 mt-1 w-full"
+                            >
+                              <option value="">-- Choose Existing Employee --</option>
+                              {employees.map((emp: Employee) => (
+                                <option key={emp.id} value={emp.id}>
+                                  {emp.full_name} ({emp.employee_id})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-          </div>
 
-          <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200">
+          {/* Action Footer */}
+          <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
             <Button variant="outline" onClick={() => setStep(1)} className="text-xs h-9">
               Back to Upload
             </Button>
             <Button
               onClick={handleConfirmCommit}
-              disabled={committing}
-              className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-6 h-9 shadow-md shadow-teal-600/20"
+              disabled={committing || previewData.is_payroll_finalized}
+              className={`text-white text-xs font-semibold px-6 h-9 shadow-md ${
+                previewData.is_payroll_finalized
+                  ? 'bg-slate-400 cursor-not-allowed'
+                  : 'bg-teal-600 hover:bg-teal-700 shadow-teal-600/20'
+              }`}
             >
-              Confirm & Save Records to Database
+              {previewData.is_payroll_finalized
+                ? 'Period Finalized (Blocked)'
+                : 'Confirm & Save Records to Database'}
             </Button>
           </div>
         </div>
@@ -575,7 +835,7 @@ export default function ImportPdfWizardPage() {
           <Loader2 className="w-10 h-10 text-teal-600 animate-spin mx-auto" />
           <h2 className="text-base font-bold text-slate-900">Saving Attendance Records to Database...</h2>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            Creating attendance records, auto-generating missing department & employee profiles if needed, and logging audit entries.
+            Creating consolidated attendance rows, registering biometric code aliases, generating monthly aggregates, and recording audit logs.
           </p>
         </div>
       )}
@@ -589,7 +849,9 @@ export default function ImportPdfWizardPage() {
 
           <div>
             <h2 className="text-xl font-extrabold text-slate-900">Attendance Import Completed Successfully!</h2>
-            <p className="text-xs text-slate-500 mt-1">All valid attendance records have been persisted to the database.</p>
+            <p className="text-xs text-slate-500 mt-1">
+              Attendance records for <strong>{previewData?.period_name || 'the selected period'}</strong> have been saved cleanly.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-lg mx-auto bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs">
@@ -611,13 +873,63 @@ export default function ImportPdfWizardPage() {
             </div>
           </div>
 
-          <div className="flex justify-center gap-3 pt-4">
-            <Button onClick={() => router.push('/attendance')} className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-5 h-9">
-              View Daily Attendance Table
+          {/* Action CTAs Linking Straight to Payroll */}
+          <div className="pt-4 flex flex-col sm:flex-row justify-center items-center gap-3">
+            {previewData?.period_year && previewData?.period_month && (
+              <Button
+                onClick={handleCalculatePayroll}
+                disabled={calculatingPayroll}
+                className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-5 h-10 shadow-md shadow-teal-600/20"
+              >
+                {calculatingPayroll ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Calculating Payroll...
+                  </>
+                ) : (
+                  <>
+                    <Calculator className="w-4 h-4 mr-2" />
+                    Calculate Payroll for {previewData.period_name}
+                  </>
+                )}
+              </Button>
+            )}
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (previewData?.period_year && previewData?.period_month) {
+                  router.push(`/payroll?year=${previewData.period_year}&month=${previewData.period_month}`)
+                } else {
+                  router.push('/payroll')
+                }
+              }}
+              className="text-xs h-10 px-5"
+            >
+              Go to Payroll Table
             </Button>
-            <Button variant="outline" onClick={() => { setSelectedFile(null); setStep(1); }} className="text-xs h-9">
-              Import Another PDF Report
+
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setSelectedFile(null)
+                setStep(1)
+              }}
+              className="text-xs h-10 px-4 text-slate-500 hover:text-slate-700"
+            >
+              Import Another PDF
             </Button>
+          </div>
+
+          {/* Documentation Link */}
+          <div className="pt-4 border-t border-slate-100 text-center">
+            <Link
+              href="/docs/monthly-import"
+              className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-teal-700 font-medium"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Need help? Read docs/MONTHLY_IMPORT.md for eSSL export and verification procedures
+            </Link>
           </div>
         </div>
       )}

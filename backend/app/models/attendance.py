@@ -24,6 +24,7 @@ class AttendanceStatus(str, enum.Enum):
     LEAVE = "LEAVE"
     HOLIDAY = "HOLIDAY"
     WEEKLY_OFF = "WEEKLY_OFF"
+    WEEKLY_OFF_PRESENT = "WEEKLY_OFF_PRESENT"
     NO_DATA = "NO_DATA"
 
 
@@ -359,3 +360,34 @@ class MonthlyAttendanceAggregate(Base):
     __table_args__ = (
         UniqueConstraint("employee_id", "year", "month", name="uq_monthly_agg_emp_period"),
     )
+
+
+class DeviceCodeAlias(Base):
+    """
+    Device Code Alias — maps a biometric / device code from a specific company device
+    (e.g., "Old Bio", "SPT") to a canonical employee.
+    Enables multi-device consolidation and automatic resolution in monthly PDF imports.
+    """
+    __tablename__ = "device_code_aliases"
+    __table_args__ = (
+        UniqueConstraint("company", "device_code", name="uq_device_code_alias_company_code"),
+        Index("ix_device_code_alias_emp", "employee_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    company: Mapped[str] = mapped_column(String(100), nullable=False)
+    device_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    employee_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    notes: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    employee: Mapped[Optional["Employee"]] = relationship("Employee")  # type: ignore[name-defined]

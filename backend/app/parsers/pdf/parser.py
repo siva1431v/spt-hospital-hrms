@@ -625,7 +625,12 @@ def parse_attendance_pdf(pdf_path: str, grace_minutes: int = 5) -> ParsedReport:
         page1_text = ""
 
     if "Monthly Status Report" in page1_text:
-        if "Summary Report" in page1_text:
+        if "Basic Report" in page1_text:
+            logger.info("Detected report type: Monthly Status Report (Basic Report)")
+            from app.parsers.pdf.basic_status_parser import MonthlyBasicStatusReportParser
+            parser = MonthlyBasicStatusReportParser(pdf_path)
+            report = parser.parse()
+        elif "Summary Report" in page1_text:
             logger.info("Detected report type: Monthly Status Report (Summary Report)")
             from app.parsers.pdf.summary_parser import MonthlySummaryReportParser
             parser = MonthlySummaryReportParser(pdf_path, grace_minutes=grace_minutes)

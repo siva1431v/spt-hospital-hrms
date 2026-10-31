@@ -9,7 +9,8 @@ from app.models.employee import Employee, EmploymentType, Gender
 from app.models.attendance import (
     Attendance, AttendanceStatus, AttendanceImport, AttendanceImportRecord,
     AttendanceCorrection, AttendanceException, ImportStatus,
-    ExceptionSeverity, ExceptionReviewStatus, MonthlyAttendanceAggregate
+    ExceptionSeverity, ExceptionReviewStatus, MonthlyAttendanceAggregate,
+    DeviceCodeAlias
 )
 from app.models.leave import LeaveType, LeaveRequest, LeaveBalance, LeaveRequestStatus
 from app.models.payroll import (
@@ -27,6 +28,7 @@ __all__ = [
     "Attendance", "AttendanceStatus", "AttendanceImport", "AttendanceImportRecord",
     "AttendanceCorrection", "AttendanceException", "ImportStatus",
     "ExceptionSeverity", "ExceptionReviewStatus", "MonthlyAttendanceAggregate",
+    "DeviceCodeAlias",
     "LeaveType", "LeaveRequest", "LeaveBalance", "LeaveRequestStatus",
     "SalaryComponent", "SalaryStructure", "SalaryStructureItem",
     "PayrollPeriod", "PayrollRecord", "PayrollItem", "SalarySlip",

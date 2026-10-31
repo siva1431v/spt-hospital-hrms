@@ -10,8 +10,24 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { toast } from 'sonner'
+import { formatINR } from '@/lib/utils'
 
 const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+interface AttendanceCoverageData {
+  year: number
+  month: number
+  period_name: string
+  total_active_employees: number
+  covered_employees: number
+  missing_employees: number
+  coverage_percentage: number
+  report_types: string[]
+  has_punch_data: boolean
+  period_status: string
+  is_fully_covered: boolean
+  notice: string
+}
 
 interface PayrollPeriodItem {
   id: number
@@ -109,6 +125,10 @@ function PayrollContent() {
   const [calculating, setCalculating] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
 
+  // Attendance coverage state & guard modal
+  const [coverage, setCoverage] = useState<AttendanceCoverageData | null>(null)
+  const [showIncompleteModal, setShowIncompleteModal] = useState(false)
+
   // Unverified salaries block modal state
   const [unverifiedEmployees, setUnverifiedEmployees] = useState<UnverifiedEmployee[]>([])
   const [showUnverifiedModal, setShowUnverifiedModal] = useState(false)
@@ -153,25 +173,40 @@ function PayrollContent() {
     let active = true
     async function load() {
       try {
-        const lookupRes = await api.get('/payroll/periods/lookup', {
-          params: { year, month },
-        })
-        if (!active) return
-        const period = lookupRes.data.period
-        const activeStaffCount = lookupRes.data.active_staff_count || 0
-        setCurrentPeriod(period)
+        const [lookupRes, covRes] = await Promise.allSettled([
+          api.get('/payroll/periods/lookup', { params: { year, month } }),
+          api.get(`/payroll/periods/${year}/${month}/coverage`),
+        ])
 
-        if (period) {
-          const recRes = await api.get(`/payroll/periods/${period.id}/records`, {
-            params: { page_size: 200 },
-          })
-          if (active) {
-            setRecords(recRes.data.items || [])
-            setTotalStaff(recRes.data.total || (recRes.data.items || []).length || activeStaffCount)
+        if (!active) return
+
+        if (covRes.status === 'fulfilled') {
+          setCoverage(covRes.value.data)
+        } else {
+          setCoverage(null)
+        }
+
+        if (lookupRes.status === 'fulfilled') {
+          const period = lookupRes.value.data.period
+          const activeStaffCount = lookupRes.value.data.active_staff_count || 0
+          setCurrentPeriod(period)
+
+          if (period) {
+            const recRes = await api.get(`/payroll/periods/${period.id}/records`, {
+              params: { page_size: 200 },
+            })
+            if (active) {
+              setRecords(recRes.data.items || [])
+              setTotalStaff(recRes.data.total || (recRes.data.items || []).length || activeStaffCount)
+            }
+          } else {
+            setRecords([])
+            setTotalStaff(activeStaffCount)
           }
         } else {
+          setCurrentPeriod(null)
           setRecords([])
-          setTotalStaff(activeStaffCount)
+          setTotalStaff(0)
         }
       } catch (err) {
         console.error(err)
@@ -230,13 +265,21 @@ function PayrollContent() {
     }
   }
 
-  const handleFinalize = async () => {
+  const handleFinalize = async (bypassCoverageWarning = false) => {
     if (!currentPeriod) return
+
+    if (!bypassCoverageWarning && coverage && !coverage.is_fully_covered) {
+      setShowIncompleteModal(true)
+      return
+    }
+
     if (!confirm('Are you sure you want to finalize and lock this payroll period?')) return
     setFinalizing(true)
     try {
       await api.post(`/payroll/periods/${currentPeriod.id}/finalize`)
+      setShowIncompleteModal(false)
       refresh()
+      toast.success(`Payroll finalized for ${MONTH_NAMES[month]} ${year}.`)
     } catch (err: unknown) {
       const resp = (err as { response?: { data?: { detail?: { unverified_employees?: UnverifiedEmployee[]; message?: string } | string } } })?.response
       const detail = resp?.data?.detail
@@ -382,7 +425,7 @@ function PayrollContent() {
                     Recalculate
                   </Button>
                   <Button
-                    onClick={handleFinalize}
+                    onClick={() => handleFinalize(false)}
                     disabled={finalizing}
                     variant="outline"
                     className="border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold gap-1.5"
@@ -462,6 +505,45 @@ function PayrollContent() {
         </div>
       </div>
 
+      {/* Attendance Coverage Card */}
+      {coverage && (
+        <div className={`p-4 rounded-xl border ${coverage.is_fully_covered ? 'bg-emerald-50/40 border-emerald-200' : 'bg-amber-50/40 border-amber-200'} shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${coverage.is_fully_covered ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+              {coverage.is_fully_covered ? <CheckCircle2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+            </div>
+            <div>
+              <div className="font-bold text-slate-900 flex flex-wrap items-center gap-2">
+                <span>Attendance Coverage: {coverage.covered_employees} of {coverage.total_active_employees} staff ({coverage.coverage_percentage}%)</span>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white text-slate-700 border border-slate-200">
+                  {coverage.report_types.length > 0 ? coverage.report_types.join(', ') : 'No Attendance Imported'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                {!coverage.has_punch_data ? (
+                  <span className="text-amber-800 font-medium">
+                    Notice: Lateness data unavailable — imported from monthly status report. LOP from lateness is not applied.
+                  </span>
+                ) : (
+                  <span className="text-emerald-800 font-medium">
+                    Punch timestamps available — lateness and overtime evaluated.
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href="/attendance/import"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 shadow-2xs transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5 text-teal-600" />
+              Import Attendance PDF
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Records Table */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
         {loading ? (
@@ -473,19 +555,19 @@ function PayrollContent() {
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[11px]">
                 <tr>
-                  <th className="p-3 pl-4">Staff Member</th>
-                  <th className="p-3">Base Salary</th>
-                  <th className="p-3 text-center">Present</th>
-                  <th className="p-3 text-center">Half</th>
-                  <th className="p-3 text-center">Leave</th>
-                  <th className="p-3 text-center">Off Duty</th>
-                  <th className="p-3 text-center bg-slate-100/60 text-slate-900 font-bold">Payable Days</th>
-                  <th className="p-3 text-right">Salary Part</th>
-                  <th className="p-3 text-center text-rose-700 font-bold bg-rose-50/40">LOP (Days & Ded)</th>
-                  <th className="p-3 text-right text-amber-700 font-semibold">Savings Fund</th>
-                  <th className="p-3 text-right text-emerald-700">Collection</th>
-                  <th className="p-3 text-right bg-teal-50/50 text-teal-900 font-extrabold">Net Salary</th>
-                  <th className="p-3 text-center pr-4">Actions</th>
+                  <th className="p-3 pl-4 whitespace-nowrap">Staff Member</th>
+                  <th className="p-3 whitespace-nowrap">Base Salary</th>
+                  <th className="p-3 text-center whitespace-nowrap">Present</th>
+                  <th className="p-3 text-center whitespace-nowrap">Half</th>
+                  <th className="p-3 text-center whitespace-nowrap">Leave</th>
+                  <th className="p-3 text-center whitespace-nowrap">Off Duty</th>
+                  <th className="p-3 text-center bg-slate-100/60 text-slate-900 font-bold whitespace-nowrap">Payable Days</th>
+                  <th className="p-3 text-right whitespace-nowrap">Salary Part</th>
+                  <th className="p-3 text-center text-rose-700 font-bold bg-rose-50/40 whitespace-nowrap">LOP (Days & Ded)</th>
+                  <th className="p-3 text-right text-amber-700 font-semibold whitespace-nowrap">Savings Fund</th>
+                  <th className="p-3 text-right text-emerald-700 whitespace-nowrap">Collection</th>
+                  <th className="p-3 text-right bg-teal-50/50 text-teal-900 font-extrabold whitespace-nowrap">Net Salary</th>
+                  <th className="p-3 text-center pr-4 whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -495,7 +577,7 @@ function PayrollContent() {
                   const fundDed = rec.security_fund_deduction || 0
                   return (
                     <tr key={rec.id} className="hover:bg-slate-50/80">
-                      <td className="p-3 pl-4">
+                      <td className="p-3 pl-4 whitespace-nowrap">
                         <div className="font-bold text-slate-900 flex items-center gap-1.5">
                           {rec.employee_name || 'Staff'}
                           {(rec.salary_verified === false || rec.salary_source === 'PLACEHOLDER') && (
@@ -506,49 +588,56 @@ function PayrollContent() {
                               Unverified Salary
                             </span>
                           )}
+                          {rec.is_manual_override && (
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[9px] bg-amber-50 text-amber-800 font-bold border border-amber-300"
+                              title="Manual calculation override applied"
+                            >
+                              Manual Override
+                            </span>
+                          )}
                         </div>
                         <div className="text-[10px] text-slate-500 font-mono">
                           {rec.biometric_code ? `Bio: ${rec.biometric_code}` : rec.employee_code} • {rec.department || '—'}
-                          {rec.is_manual_override && <span className="ml-1 text-amber-700 font-bold">(Overridden)</span>}
                         </div>
                       </td>
-                      <td className="p-3 font-mono font-semibold text-slate-900">
-                        ₹ {rec.basic_salary?.toLocaleString('en-IN')}
+                      <td className="p-3 font-mono font-semibold text-slate-900 whitespace-nowrap">
+                        {formatINR(rec.basic_salary)}
                       </td>
-                      <td className="p-3 text-center font-mono font-bold text-emerald-700">{rec.present_days}</td>
-                      <td className="p-3 text-center font-mono text-amber-700">{rec.half_days || 0}</td>
-                      <td className="p-3 text-center font-mono text-blue-700">{rec.leave_days || 0}</td>
-                      <td className="p-3 text-center font-mono text-purple-700">{rec.off_duty_days || 0}</td>
-                      <td className="p-3 text-center font-mono font-extrabold bg-slate-100/60 text-slate-900">
+                      <td className="p-3 text-center font-mono font-bold text-emerald-700 whitespace-nowrap">{rec.present_days}</td>
+                      <td className="p-3 text-center font-mono text-amber-700 whitespace-nowrap">{rec.half_days || 0}</td>
+                      <td className="p-3 text-center font-mono text-blue-700 whitespace-nowrap">{rec.leave_days || 0}</td>
+                      <td className="p-3 text-center font-mono text-purple-700 whitespace-nowrap">{rec.off_duty_days || 0}</td>
+                      <td className="p-3 text-center font-mono font-extrabold bg-slate-100/60 text-slate-900 whitespace-nowrap">
                         {rec.payable_days}
                       </td>
-                      <td className="p-3 text-right font-mono font-semibold text-slate-800">
-                        ₹ {rec.salary_part?.toLocaleString('en-IN')}
+                      <td className="p-3 text-right font-mono font-semibold text-slate-800 whitespace-nowrap">
+                        {formatINR(rec.salary_part)}
                       </td>
                       <td
-                        className={`p-3 text-center font-mono font-bold bg-rose-50/40 ${lopDays > 0 ? 'cursor-pointer hover:bg-rose-100/60 transition-colors' : ''}`}
+                        className={`p-3 text-center font-mono font-bold bg-rose-50/40 whitespace-nowrap ${lopDays > 0 ? 'cursor-pointer hover:bg-rose-100/60 transition-colors' : ''}`}
                         onClick={() => lopDays > 0 && openLatenessBreakdown(rec)}
                         title={lopDays > 0 ? "Click to view late arrivals breakdown dates" : "No LOP deduction"}
                       >
                         {lopDays > 0 ? (
                           <div>
                             <span className="text-rose-700 block text-xs underline decoration-dotted decoration-rose-400">-{lopDays} d</span>
-                            <span className="text-[10px] text-rose-600 block">-₹ {lopDed.toLocaleString('en-IN')}</span>
+                            <span className="text-[10px] text-rose-600 block">-{formatINR(lopDed)}</span>
                           </div>
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}
                       </td>
-                      <td className="p-3 text-right font-mono text-amber-800 font-medium">
-                        {fundDed > 0 ? `-₹ ${fundDed.toLocaleString('en-IN')}` : '—'}
+                      <td className="p-3 text-right font-mono text-amber-800 font-medium whitespace-nowrap">
+                        {fundDed > 0 ? `-${formatINR(fundDed)}` : '—'}
                       </td>
-                      <td className="p-3 text-right font-mono font-semibold text-emerald-700">
-                        {(rec.collection ?? 0) > 0 ? `+₹ ${rec.collection?.toLocaleString('en-IN')}` : '₹ 0'}
+                      <td className="p-3 text-right font-mono font-semibold text-emerald-700 whitespace-nowrap">
+                        {(rec.collection ?? 0) > 0 ? `+${formatINR(rec.collection)}` : '₹0.00'}
                       </td>
-                      <td className="p-3 text-right font-mono font-extrabold bg-teal-50/40 text-teal-700 text-sm">
-                        ₹ {(rec.net_salary ?? rec.total_salary)?.toLocaleString('en-IN')}
+                      <td className="p-3 text-right font-mono font-extrabold bg-teal-50/40 text-teal-700 text-sm whitespace-nowrap">
+                        {formatINR(rec.net_salary ?? rec.total_salary)}
                       </td>
-                      <td className="p-3 text-center pr-4">
+                      <td className="p-3 text-center pr-4 whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1.5">
                           <Button
                             size="sm"
@@ -874,6 +963,45 @@ function PayrollContent() {
                 className="text-xs h-8"
               >
                 Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Incomplete Coverage Finalize Guard Modal */}
+      {showIncompleteModal && coverage && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 space-y-4 shadow-xl border border-slate-200">
+            <div className="flex items-center gap-2.5 text-amber-700">
+              <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0" />
+              <h2 className="text-base font-bold text-slate-900">
+                Attendance Coverage Incomplete ({coverage.covered_employees}/{coverage.total_active_employees})
+              </h2>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Attendance records have only been imported for <strong>{coverage.covered_employees}</strong> out of <strong>{coverage.total_active_employees}</strong> active employees (<strong>{coverage.missing_employees}</strong> missing).
+            </p>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Finalizing now will lock payroll for {MONTH_NAMES[month]} {year}. Missing employees will receive 0 attendance days.
+            </p>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowIncompleteModal(false)}
+                className="text-xs h-8"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => handleFinalize(true)}
+                disabled={finalizing}
+                className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold h-8 gap-1.5"
+              >
+                {finalizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                Proceed & Finalize Anyway
               </Button>
             </div>
           </div>

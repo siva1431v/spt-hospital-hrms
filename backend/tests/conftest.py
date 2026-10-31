@@ -81,6 +81,22 @@ def setup_test_database():
 
     if os.path.exists(backup_path):
         shutil.copyfile(backup_path, _test_db_path)
+        import sqlite3
+        with sqlite3.connect(_test_db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS device_code_aliases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company VARCHAR(100) NOT NULL,
+                    device_code VARCHAR(50) NOT NULL,
+                    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                    notes VARCHAR(255),
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_device_code_alias_company_code UNIQUE (company, device_code)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_device_code_alias_emp ON device_code_aliases (employee_id)")
+            conn.commit()
     else:
         from app.core.database import Base
         from scripts.init_db import init_database

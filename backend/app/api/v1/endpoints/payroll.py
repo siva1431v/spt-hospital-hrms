@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, extract
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
@@ -100,6 +100,136 @@ async def lookup_payroll_period(
         },
         "active_staff_count": active_staff_count,
     }
+
+
+@router.get("/payroll/periods/{year}/{month}/coverage", response_model=dict)
+async def get_payroll_attendance_coverage(
+    year: int,
+    month: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """
+    Get attendance coverage statistics for a month before running or finalizing payroll.
+    Checks:
+    - Active employee count vs employees with attendance data
+    - Report types imported (e.g. Basic Report, Punch Report)
+    - Whether punch data exists (for lateness / OT availability)
+    - Coverage percentage
+    - Finalize readiness
+    """
+    import calendar
+    from app.models.attendance import Attendance, MonthlyAttendanceAggregate, AttendanceImport
+
+    # 1. Total active employees
+    total_active_res = await db.execute(select(Employee).where(Employee.is_active == True))
+    active_employees = list(total_active_res.scalars().all())
+    total_active = len(active_employees)
+    active_emp_ids = set(e.id for e in active_employees)
+
+    if total_active == 0:
+        return {
+            "year": year,
+            "month": month,
+            "period_name": f"{calendar.month_name[month]} {year}",
+            "total_active_employees": 0,
+            "covered_employees": 0,
+            "missing_employees": 0,
+            "coverage_percentage": 100.0,
+            "report_types": [],
+            "has_punch_data": False,
+            "period_status": "DRAFT",
+            "is_fully_covered": True,
+            "notice": "No active employees in master.",
+        }
+
+    # 2. Employees with attendance records
+    att_emp_ids_res = await db.execute(
+        select(Attendance.employee_id).where(
+            Attendance.employee_id.in_(active_emp_ids),
+            extract("year", Attendance.attendance_date) == year,
+            extract("month", Attendance.attendance_date) == month,
+        ).distinct()
+    )
+    att_emp_ids = set(att_emp_ids_res.scalars().all())
+
+    # 3. Employees with monthly aggregates
+    agg_emp_ids_res = await db.execute(
+        select(MonthlyAttendanceAggregate.employee_id).where(
+            MonthlyAttendanceAggregate.employee_id.in_(active_emp_ids),
+            MonthlyAttendanceAggregate.year == year,
+            MonthlyAttendanceAggregate.month == month,
+            MonthlyAttendanceAggregate.employee_id.isnot(None),
+        ).distinct()
+    )
+    agg_emp_ids = set(agg_emp_ids_res.scalars().all())
+
+    covered_emp_ids = att_emp_ids | agg_emp_ids
+    covered_count = len(covered_emp_ids)
+    missing_count = max(0, total_active - covered_count)
+    coverage_pct = round((covered_count / total_active * 100), 1)
+
+    # 4. Report types imported
+    import_res = await db.execute(
+        select(AttendanceImport.report_type).where(
+            (extract("year", AttendanceImport.date_range_start) == year) &
+            (extract("month", AttendanceImport.date_range_start) == month)
+        ).distinct()
+    )
+    report_types = [r for r in import_res.scalars().all() if r]
+    if not report_types:
+        agg_types_res = await db.execute(
+            select(MonthlyAttendanceAggregate.has_zero_punches).where(
+                MonthlyAttendanceAggregate.year == year,
+                MonthlyAttendanceAggregate.month == month,
+            ).limit(1)
+        )
+        zero_punches = agg_types_res.scalar_one_or_none()
+        if zero_punches is True:
+            report_types = ["Monthly Status Report (Basic Report)"]
+        elif zero_punches is False:
+            report_types = ["Monthly Status Report (Detailed Work Duration)"]
+
+    # 5. Punch data check
+    punch_check_res = await db.execute(
+        select(Attendance.id).where(
+            Attendance.employee_id.in_(active_emp_ids),
+            extract("year", Attendance.attendance_date) == year,
+            extract("month", Attendance.attendance_date) == month,
+            (Attendance.check_in_datetime.isnot(None)) | (Attendance.work_minutes > 0)
+        ).limit(1)
+    )
+    has_punch_data = punch_check_res.scalar_one_or_none() is not None
+
+    # 6. Period status
+    period_res = await db.execute(
+        select(PayrollPeriod).where(PayrollPeriod.year == year, PayrollPeriod.month == month)
+    )
+    period = period_res.scalar_one_or_none()
+    period_status = period.status.value if period else "NOT_CREATED"
+
+    days_in_m = calendar.monthrange(year, month)[1]
+    m_name = calendar.month_name[month]
+
+    report_label = report_types[0] if report_types else "No report imported"
+    punch_label = "Punch times available" if has_punch_data else "Basic Report • No punch times (Lateness/OT unavailable)"
+    notice_str = f"Attendance: {covered_count} / {total_active} employees imported ({m_name[:3]} 01 – {m_name[:3]} {days_in_m:02d}, {year} • {report_label} • {punch_label})"
+
+    return {
+        "year": year,
+        "month": month,
+        "period_name": f"{m_name} {year}",
+        "total_active_employees": total_active,
+        "covered_employees": covered_count,
+        "missing_employees": missing_count,
+        "coverage_percentage": coverage_pct,
+        "report_types": report_types,
+        "has_punch_data": has_punch_data,
+        "period_status": period_status,
+        "is_fully_covered": covered_count >= total_active,
+        "notice": notice_str,
+    }
+
 
 
 @router.get("/payroll/periods", response_model=dict)

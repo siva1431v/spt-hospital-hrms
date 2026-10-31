@@ -271,6 +271,7 @@ async def test_item3_deduction_capped_at_gross_and_carried_forward():
             "present_days": 0.0,
             "half_days": 0.0,
             "leave_days": 0.0,
+            "absent_days": 0.0,
             "off_duty_days": 0.0,
             "qualifying_late_days": 0,
             "collection": 0.0,
@@ -292,6 +293,7 @@ async def test_item3_deduction_capped_at_gross_and_carried_forward():
             "present_days": 0.2,  # 0.2 * 1000 = 200
             "half_days": 0.0,
             "leave_days": 0.0,
+            "absent_days": 0.0,
             "off_duty_days": 0.0,
             "qualifying_late_days": 0,
             "collection": 0.0,

@@ -121,3 +121,21 @@ class AttendanceImportResponse(BaseModel):
     status: str
 
     model_config = ConfigDict(from_attributes=True)
+
+class DeviceCodeAliasCreate(BaseModel):
+    company: str
+    device_code: str
+    employee_id: int
+    notes: Optional[str] = None
+
+class DeviceCodeAliasResponse(BaseModel):
+    id: int
+    company: str
+    device_code: str
+    employee_id: int
+    employee_name: Optional[str] = None
+    employee_code: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)

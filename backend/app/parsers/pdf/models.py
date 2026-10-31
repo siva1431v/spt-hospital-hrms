@@ -14,6 +14,11 @@ class ParsedStatus(str, Enum):
     ABSENT = "ABSENT"
     PRESENT_INCOMPLETE = "PRESENT_INCOMPLETE"
     PRESENT_OVERNIGHT = "PRESENT_OVERNIGHT"
+    HALF_DAY = "HALF_DAY"
+    LEAVE = "LEAVE"
+    HOLIDAY = "HOLIDAY"
+    WEEKLY_OFF = "WEEKLY_OFF"
+    WEEKLY_OFF_PRESENT = "WEEKLY_OFF_PRESENT"
     NO_DATA = "NO_DATA"
     UNKNOWN = "UNKNOWN"
 
@@ -118,6 +123,21 @@ class MonthlyEmployeeAggregate:
 
 
 @dataclass
+class MonthlyBasicStatusRow:
+    """Row extracted from eSSL 'Monthly Status Report (Basic Report)'."""
+    company: str
+    employee_code: str
+    employee_name: str
+    pdf_department: str
+    day_statuses: dict[int, str] = field(default_factory=dict)  # day_num (1..31) -> "P", "A", etc.
+    printed_totals: dict[str, int] = field(default_factory=dict)  # "P" -> 25, "A" -> 5, etc.
+    computed_totals: dict[str, int] = field(default_factory=dict)
+    checksum_valid: bool = True
+    checksum_errors: list[str] = field(default_factory=list)
+    no_data_days: list[int] = field(default_factory=list)
+
+
+@dataclass
 class ParsedReport:
     """Complete parsed eSSL attendance PDF report."""
     report_type: Optional[str] = None
@@ -129,6 +149,7 @@ class ParsedReport:
     parse_warnings: list[str] = field(default_factory=list)
     total_pages: int = 0
     monthly_aggregates: list[MonthlyEmployeeAggregate] = field(default_factory=list)
+    basic_status_rows: list[MonthlyBasicStatusRow] = field(default_factory=list)
 
     @property
     def all_records(self) -> list[ParsedAttendanceRecord]:

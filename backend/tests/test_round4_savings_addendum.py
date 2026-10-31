@@ -173,7 +173,7 @@ async def test_excessive_savings_amount_deducts_nothing():
                 year=2026,
                 month=11,
                 period=period,
-                override_inputs={"present_days": 1.0},  # Earns 333.33, cannot cover 500
+                override_inputs={"present_days": 1.0, "absent_days": 0.0},  # Earns 333.33, cannot cover 500
             )
             # Available is 333.33 < 500 requested -> Deducts nothing (0.0)
             assert rec.security_fund_deduction == 0.0

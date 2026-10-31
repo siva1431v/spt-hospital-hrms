@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.models.user import UserRole
 from app.models.attendance import (
     Attendance, AttendanceStatus, AttendanceImport,
-    AttendanceCorrection, AttendanceException,
+    AttendanceCorrection, AttendanceException, DeviceCodeAlias,
 )
 from app.models.employee import Employee
 from app.models.department import Department
@@ -27,6 +27,8 @@ from app.schemas.attendance import (
     AttendanceExceptionBulkReviewRequest,
     AttendanceLeaveReclassifyRequest,
     AttendanceBulkLeaveReclassifyRequest,
+    DeviceCodeAliasCreate,
+    DeviceCodeAliasResponse,
 )
 from app.services.attendance_import import AttendanceImportService
 from app.utils.audit import log_audit
@@ -1562,6 +1564,110 @@ async def get_shift_mismatch_diagnostics(
         "mismatched_employees_count": mismatched_count,
         "items": diagnostics,
     }
+
+
+# ─── Device Code Aliases Endpoints ──────────────────────────────────────────
+@router.get("/aliases", response_model=dict)
+async def list_device_code_aliases(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+):
+    """List all registered device code aliases."""
+    stmt = (
+        select(DeviceCodeAlias)
+        .options(selectinload(DeviceCodeAlias.employee))
+        .order_by(DeviceCodeAlias.company, DeviceCodeAlias.device_code)
+    )
+    result = await db.execute(stmt)
+    aliases = result.scalars().all()
+    items = []
+    for a in aliases:
+        items.append({
+            "id": a.id,
+            "company": a.company,
+            "device_code": a.device_code,
+            "employee_id": a.employee_id,
+            "employee_name": a.employee.full_name if a.employee else None,
+            "employee_code": a.employee.employee_id if a.employee else None,
+            "notes": a.notes,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        })
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/aliases", response_model=dict)
+async def create_or_update_device_code_alias(
+    payload: DeviceCodeAliasCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN))],
+):
+    """Create or update a device code alias."""
+    # Verify employee exists
+    emp_res = await db.execute(select(Employee).where(Employee.id == payload.employee_id))
+    emp = emp_res.scalar_one_or_none()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    company_clean = payload.company.strip()
+    code_clean = payload.device_code.strip()
+
+    stmt = select(DeviceCodeAlias).where(
+        DeviceCodeAlias.company == company_clean,
+        DeviceCodeAlias.device_code == code_clean,
+    )
+    res = await db.execute(stmt)
+    existing = res.scalar_one_or_none()
+    if existing:
+        existing.employee_id = payload.employee_id
+        if payload.notes is not None:
+            existing.notes = payload.notes
+        await db.commit()
+        await db.refresh(existing)
+        return {
+            "message": "Device code alias updated",
+            "id": existing.id,
+            "company": existing.company,
+            "device_code": existing.device_code,
+            "employee_id": existing.employee_id,
+            "notes": existing.notes,
+        }
+    else:
+        new_alias = DeviceCodeAlias(
+            company=company_clean,
+            device_code=code_clean,
+            employee_id=payload.employee_id,
+            notes=payload.notes,
+        )
+        db.add(new_alias)
+        await db.commit()
+        await db.refresh(new_alias)
+        return {
+            "message": "Device code alias created",
+            "id": new_alias.id,
+            "company": new_alias.company,
+            "device_code": new_alias.device_code,
+            "employee_id": new_alias.employee_id,
+            "notes": new_alias.notes,
+        }
+
+
+@router.delete("/aliases/{alias_id}", response_model=dict)
+async def delete_device_code_alias(
+    alias_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[object, Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN))],
+):
+    """Delete a device code alias by ID."""
+    stmt = select(DeviceCodeAlias).where(DeviceCodeAlias.id == alias_id)
+    res = await db.execute(stmt)
+    alias = res.scalar_one_or_none()
+    if not alias:
+        raise HTTPException(status_code=404, detail="Device code alias not found")
+
+    await db.delete(alias)
+    await db.commit()
+    return {"message": "Device code alias deleted", "id": alias_id}
+
 
 
 
