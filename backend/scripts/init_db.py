@@ -21,7 +21,7 @@ async def init_database():
     from app.models.shift import Shift, ShiftCodeAlias
     from app.models.attendance import (
         Attendance, AttendanceException, AttendanceImport,
-        MonthlyAttendanceAggregate,
+        MonthlyAttendanceAggregate, DeviceCodeAlias,
     )
     from app.models.payroll import (
         PayrollPeriod, PayrollRecord, PayrollItem, SalaryStructure,
