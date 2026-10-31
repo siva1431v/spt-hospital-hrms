@@ -53,24 +53,30 @@ export interface ReviewRowItem {
   company: string
   employee_code: string
   employee_name: string
-  pdf_department: string
-  status: 'MATCHED' | 'NAME_MISMATCH' | 'NEW_EMPLOYEE' | 'DUPLICATE_SUSPECT'
-  default_action: 'link' | 'create' | 'ignore'
-  save_as_alias: boolean
-  matched_employee_id: number | null
-  matched_employee_name: string | null
-  summary: {
-    P: number
-    A: number
-    L: number
-    H: number
-    HP: number
-    WO: number
-    WOP: number
-    NO_DATA: number
+  pdf_department?: string
+  status: 'MATCHED' | 'NAME_MISMATCH' | 'NEW_EMPLOYEE' | 'DUPLICATE_SUSPECT' | string
+  default_action?: 'link' | 'create' | 'ignore'
+  action?: 'link' | 'create' | 'ignore'
+  suggested_action?: 'link' | 'create' | 'ignore'
+  save_as_alias?: boolean
+  matched_employee_id?: number | null
+  mapped_employee_id?: number | null
+  matched_employee_name?: string | null
+  mapped_employee_name?: string | null
+  summary?: {
+    P?: number
+    A?: number
+    L?: number
+    H?: number
+    HP?: number
+    WO?: number
+    WOP?: number
+    NO_DATA?: number
   }
-  checksum_valid: boolean
-  checksum_errors: string[]
+  computed_totals?: { [code: string]: number }
+  printed_totals?: { [code: string]: number }
+  checksum_valid?: boolean
+  checksum_errors?: string[]
 }
 
 interface ImportPreviewData {
@@ -197,10 +203,11 @@ export default function ImportPdfWizardPage() {
         const initialMap: { [key: string]: ReviewActionState } = {}
         data.review_rows.forEach((row) => {
           const key = `${row.company}_${row.employee_code}`
+          const act = (row.default_action || row.action || row.suggested_action || 'link') as 'link' | 'create' | 'ignore'
           initialMap[key] = {
-            action: row.default_action,
-            employee_id: row.matched_employee_id,
-            save_as_alias: row.save_as_alias,
+            action: act,
+            employee_id: row.matched_employee_id ?? row.mapped_employee_id ?? null,
+            save_as_alias: Boolean(row.save_as_alias),
           }
         })
         setReviewActions(initialMap)
@@ -609,11 +616,23 @@ export default function ImportPdfWizardPage() {
                   <tbody className="divide-y divide-slate-100 text-[11px]">
                     {filteredReviewRows.map((row) => {
                       const key = `${row.company}_${row.employee_code}`
+                      const defaultAct = (row.default_action || row.action || row.suggested_action || 'link') as 'link' | 'create' | 'ignore'
                       const currentAction = reviewActions[key] || {
-                        action: row.default_action,
-                        employee_id: row.matched_employee_id,
-                        save_as_alias: row.save_as_alias,
+                        action: defaultAct,
+                        employee_id: row.matched_employee_id ?? row.mapped_employee_id ?? null,
+                        save_as_alias: Boolean(row.save_as_alias),
                       }
+
+                      const summary = row.summary || row.computed_totals || {}
+                      const pCount = summary.P ?? 0
+                      const aCount = summary.A ?? 0
+                      const hpCount = summary.HP ?? 0
+                      const lCount = summary.L ?? 0
+                      const hCount = summary.H ?? 0
+                      const woCount = summary.WO ?? 0
+                      const wopCount = summary.WOP ?? 0
+                      const noDataCount = summary.NO_DATA ?? 0
+                      const matchedEmpName = row.matched_employee_name || row.mapped_employee_name || 'Staff'
 
                       let statusBadge = (
                         <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -627,7 +646,7 @@ export default function ImportPdfWizardPage() {
                             <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
                               Name Mismatch
                             </span>
-                            <div className="text-[10px] text-amber-700">Master: {row.matched_employee_name}</div>
+                            <div className="text-[10px] text-amber-700">Master: {matchedEmpName}</div>
                           </div>
                         )
                       } else if (row.status === 'NEW_EMPLOYEE') {
@@ -682,14 +701,15 @@ export default function ImportPdfWizardPage() {
 
                           <td className="p-2.5 font-mono text-[10px]">
                             <div className="flex items-center gap-1.5">
-                              <span className="text-emerald-700 font-bold">P:{row.summary.P}</span>
-                              <span className="text-rose-600 font-bold">A:{row.summary.A}</span>
-                              {row.summary.HP > 0 && <span className="text-amber-700">HP:{row.summary.HP}</span>}
-                              {row.summary.L > 0 && <span className="text-blue-700">L:{row.summary.L}</span>}
-                              {row.summary.H > 0 && <span className="text-purple-700">H:{row.summary.H}</span>}
-                              {row.summary.WO > 0 && <span className="text-slate-600">WO:{row.summary.WO}</span>}
-                              {row.summary.NO_DATA > 0 && (
-                                <span className="text-slate-400">NoData:{row.summary.NO_DATA}</span>
+                              <span className="text-emerald-700 font-bold">P:{pCount}</span>
+                              <span className="text-rose-600 font-bold">A:{aCount}</span>
+                              {hpCount > 0 && <span className="text-amber-700">HP:{hpCount}</span>}
+                              {lCount > 0 && <span className="text-blue-700">L:{lCount}</span>}
+                              {hCount > 0 && <span className="text-purple-700">H:{hCount}</span>}
+                              {woCount > 0 && <span className="text-slate-600">WO:{woCount}</span>}
+                              {wopCount > 0 && <span className="text-teal-700">WOP:{wopCount}</span>}
+                              {noDataCount > 0 && (
+                                <span className="text-slate-400">NoData:{noDataCount}</span>
                               )}
                             </div>
                             {row.checksum_errors && row.checksum_errors.length > 0 && (
