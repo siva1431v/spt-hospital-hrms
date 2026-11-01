@@ -396,6 +396,199 @@ class AttendanceImportService:
 
         return review_rows
 
+    async def _build_summary_report_review_rows(
+        self, report: ParsedReport, employee_map: dict[str, Employee]
+    ) -> list[dict]:
+        """
+        Build Step 3 review rows for eSSL Monthly Status Report (Summary Report).
+        Matches each aggregate row by:
+        1. DeviceCodeAlias (company, device_code) -> MATCHED (via alias)
+        2. Biometric code / employee_id -> check name match -> MATCHED or NAME_MISMATCH
+        3. Name search across all employees -> DUPLICATE_SUSPECT
+        4. No match -> NEW_EMPLOYEE
+        Also detects Old Bio all-absent duplicates and flags them for default IGNORE.
+        """
+        import re
+        from sqlalchemy.orm import selectinload
+        from app.models.attendance import DeviceCodeAlias
+
+        all_emps_res = await self.db.execute(
+            select(Employee).options(selectinload(Employee.department)).where(Employee.is_active == True)
+        )
+        all_employees = list(all_emps_res.scalars().all())
+
+        alias_res = await self.db.execute(
+            select(DeviceCodeAlias).options(selectinload(DeviceCodeAlias.employee).selectinload(Employee.department))
+        )
+        aliases = list(alias_res.scalars().all())
+        alias_lookup = {
+            (a.company.strip().lower(), str(a.device_code).strip()): a
+            for a in aliases
+        }
+
+        def norm_name(n: str) -> str:
+            n = re.sub(r"\b(dr\.?|mr\.?|mrs\.?|ms\.?)\b", "", n, flags=re.IGNORECASE)
+            return re.sub(r"[^a-z0-9]", "", n.lower())
+
+        days_in_period = (
+            (report.date_range_end - report.date_range_start).days + 1
+            if (report.date_range_start and report.date_range_end)
+            else 31
+        )
+
+        review_rows = []
+        for agg in report.monthly_aggregates:
+            code_str = str(agg.employee_code).strip()
+            company_str = (agg.company_name or report.company_name or "SPT").strip()
+            emp_name = (agg.employee_name or "").strip()
+            dept_name = agg.department_name or "Default"
+            alias_key = (company_str.lower(), code_str)
+
+            p_count = agg.present_count or 0
+            a_count = agg.absent_count or 0
+            l_count = agg.leaves_taken or 0
+            h_count = agg.holidays_count or 0
+            wo_count = agg.weekly_off_count or 0
+            days_sum = p_count + a_count + l_count + h_count + wo_count
+
+            validation_warning = None
+            if days_sum > days_in_period:
+                validation_warning = f"Status counts ({days_sum}) exceed days in month ({days_in_period})"
+
+            est_join = report.date_range_start.isoformat() if report.date_range_start else None
+
+            # 1. Check alias
+            if alias_key in alias_lookup:
+                alias = alias_lookup[alias_key]
+                status = "MATCHED"
+                match_type = "ALIAS"
+                mapped_emp = alias.employee
+                mapped_emp_id = alias.employee_id
+                mapped_emp_name = mapped_emp.full_name if mapped_emp else None
+                mapped_dept_name = mapped_emp.department.name if (mapped_emp and mapped_emp.department) else None
+                action = "link"
+                note = f"Matched via alias to {mapped_emp_name} ({mapped_emp.employee_id if mapped_emp else ''})"
+            else:
+                # 2. Check employee by biometric code or employee_id
+                emp = employee_map.get(code_str)
+                if emp:
+                    p_norm = norm_name(emp_name)
+                    m_norm = norm_name(emp.full_name)
+                    p_tokens = set(re.findall(r"\w+", emp_name.lower())) - {"dr", "mr", "mrs", "ms"}
+                    m_tokens = set(re.findall(r"\w+", emp.full_name.lower())) - {"dr", "mr", "mrs", "ms"}
+
+                    name_matched = (
+                        p_norm == m_norm
+                        or (len(p_norm) >= 3 and (p_norm in m_norm or m_norm in p_norm))
+                        or bool(p_tokens and m_tokens and (p_tokens & m_tokens))
+                    )
+
+                    if name_matched:
+                        status = "MATCHED"
+                        match_type = "EXACT"
+                        mapped_emp_id = emp.id
+                        mapped_emp_name = emp.full_name
+                        mapped_dept_name = emp.department.name if emp.department else None
+                        action = "link"
+                        note = f"Matched by biometric code {code_str}"
+                    else:
+                        status = "NAME_MISMATCH"
+                        match_type = "NAME_MISMATCH"
+                        mapped_emp_id = emp.id
+                        mapped_emp_name = emp.full_name
+                        mapped_dept_name = emp.department.name if emp.department else None
+                        action = "link"
+                        note = f"Code matches #{emp.employee_id} ({emp.full_name}), but PDF name is \"{emp_name}\""
+                else:
+                    # 3. Check name against all employees
+                    suspect = None
+                    p_norm = norm_name(emp_name)
+                    p_tokens = set(re.findall(r"\w+", emp_name.lower())) - {"dr", "mr", "mrs", "ms"}
+                    for e in all_employees:
+                        e_norm = norm_name(e.full_name)
+                        if p_norm == e_norm or (len(p_norm) >= 4 and (p_norm in e_norm or e_norm in p_norm)):
+                            suspect = e
+                            break
+                        e_tokens = set(re.findall(r"\w+", e.full_name.lower())) - {"dr", "mr", "mrs", "ms"}
+                        if p_tokens and e_tokens and (p_tokens & e_tokens):
+                            suspect = e
+                            break
+
+                    if suspect:
+                        status = "DUPLICATE_SUSPECT"
+                        match_type = "DUPLICATE_SUSPECT"
+                        mapped_emp_id = suspect.id
+                        mapped_emp_name = suspect.full_name
+                        mapped_dept_name = suspect.department.name if suspect.department else None
+                        action = "link"
+                        note = f"Code {code_str} not in master, but name matches #{suspect.employee_id} ({suspect.full_name})"
+                    else:
+                        status = "NEW_EMPLOYEE"
+                        match_type = "NEW_EMPLOYEE"
+                        mapped_emp_id = None
+                        mapped_emp_name = None
+                        mapped_dept_name = None
+                        action = "create"
+                        note = f"New employee from {dept_name}"
+
+            # 4. Check for Old Bio all-absent duplicate
+            if company_str == "Old Bio" and p_count == 0:
+                other_spt = next(
+                    (
+                        r
+                        for r in report.monthly_aggregates
+                        if (r.company_name or "") != "Old Bio"
+                        and norm_name(r.employee_name or "") == norm_name(emp_name)
+                        and (r.present_count or 0) > 0
+                    ),
+                    None,
+                )
+                if other_spt:
+                    status = "DUPLICATE_SUSPECT"
+                    action = "ignore"
+                    note = f"Old Bio duplicate: 0 Present / {a_count} Absent (Active SPT code {other_spt.employee_code} has {other_spt.present_count}P)"
+
+            computed_totals = {
+                "P": p_count,
+                "A": a_count,
+                "L": l_count,
+                "H": h_count,
+                "HP": 0,
+                "WO": wo_count,
+                "WOP": 0,
+                "NO_DATA": 0,
+            }
+
+            review_rows.append({
+                "company": company_str,
+                "employee_code": code_str,
+                "employee_name": emp_name,
+                "pdf_department": dept_name,
+                "day_statuses": {},
+                "printed_totals": computed_totals,
+                "computed_totals": computed_totals,
+                "summary": computed_totals,
+                "checksum_valid": True,
+                "checksum_errors": [],
+                "no_data_days": [],
+                "status": status,
+                "match_type": match_type,
+                "mapped_employee_id": mapped_emp_id,
+                "matched_employee_id": mapped_emp_id,
+                "mapped_employee_name": mapped_emp_name,
+                "matched_employee_name": mapped_emp_name,
+                "mapped_department_name": mapped_dept_name,
+                "suggested_action": action,
+                "default_action": action,
+                "action": action,
+                "save_as_alias": False,
+                "suggested_joining_date": est_join,
+                "note": note,
+                "validation_warning": validation_warning,
+            })
+
+        return review_rows
+
     async def preview(
         self, pdf_path: str, filename: str, file_size: int
     ) -> dict:
@@ -598,6 +791,8 @@ class AttendanceImportService:
         review_rows = []
         if report.basic_status_rows:
             review_rows = await self._build_basic_status_review_rows(report, employee_map)
+        elif report.report_type == "Monthly Status Report (Summary Report)" and report.monthly_aggregates:
+            review_rows = await self._build_summary_report_review_rows(report, employee_map)
 
         return {
             "report_type": report.report_type,
@@ -1146,6 +1341,71 @@ class AttendanceImportService:
                 except Exception:
                     pass
 
+            # Index review actions if present
+            actions_by_key = {}
+            raw_actions = preview_data.get("review_actions") or []
+            if isinstance(raw_actions, list):
+                for act in raw_actions:
+                    c = str(act.get("company", "")).strip().lower()
+                    code = str(act.get("employee_code", "")).strip()
+                    if c and code:
+                        actions_by_key[(c, code)] = act
+                    if code:
+                        actions_by_key[code] = act
+            elif isinstance(raw_actions, dict):
+                actions_by_key = raw_actions
+
+            # Process create / link / alias actions from Step 3 review screen
+            for act in (raw_actions if isinstance(raw_actions, list) else raw_actions.values()):
+                company = str(act.get("company", "SPT")).strip()
+                code = str(act.get("employee_code", "")).strip()
+                action_type = act.get("action") or "link"
+                if action_type == "create":
+                    if code not in employee_map:
+                        check_existing = await self.db.execute(
+                            select(Employee).where(
+                                (Employee.biometric_code == code) | (Employee.employee_id == f"SPT{code}")
+                            )
+                        )
+                        existing_emp = check_existing.scalar_one_or_none()
+                        if existing_emp:
+                            employee_map[code] = existing_emp
+                        else:
+                            agg_item = next((a for a in preview_data.get("monthly_aggregates", []) if str(a.get("employee_code")).strip() == code), None)
+                            emp_name = agg_item.get("employee_name", f"Employee {code}") if agg_item else f"Employee {code}"
+                            dept_n = agg_item.get("department_name", "Default") if agg_item else "Default"
+                            matched_dept = dept_map.get(dept_n.upper().strip())
+                            dept_id = matched_dept.id if matched_dept else (all_employees[0].department_id if all_employees else None)
+
+                            first_name_val = emp_name.split()[0] if emp_name else "Employee"
+                            last_name_val = " ".join(emp_name.split()[1:]) if (emp_name and len(emp_name.split()) > 1) else ""
+
+                            new_emp = Employee(
+                                employee_id=f"SPT{code}",
+                                biometric_code=code,
+                                first_name=first_name_val,
+                                last_name=last_name_val,
+                                full_name=emp_name,
+                                department_id=dept_id,
+                                joining_date=date(year_val, month_val, 1) if (year_val and month_val) else date.today(),
+                                is_active=True,
+                            )
+                            self.db.add(new_emp)
+                            await self.db.flush()
+                            await self.db.refresh(new_emp)
+                            employee_map[code] = new_emp
+                            if act.get("save_as_alias") or act.get("save_alias"):
+                                await self._upsert_alias(company, code, new_emp.id, f"Auto-created from {company} code {code}")
+                elif action_type == "link":
+                    target_id = act.get("employee_id")
+                    if target_id:
+                        emp_res = await self.db.execute(select(Employee).where(Employee.id == int(target_id)))
+                        linked_emp = emp_res.scalar_one_or_none()
+                        if linked_emp:
+                            employee_map[code] = linked_emp
+                            if act.get("save_as_alias") or act.get("save_alias"):
+                                await self._upsert_alias(company, code, linked_emp.id, f"Linked from {company} code {code}")
+
             for record_data in preview_data["records"]:
                 emp_code = record_data.get("employee_code")
                 dept_name = record_data.get("department_name", "")
@@ -1208,11 +1468,18 @@ class AttendanceImportService:
                 )
                 self.db.add(ir)
 
-            # Persist monthly aggregates
+            # Persist monthly aggregates (consolidating by employee to enforce (employee_id, year, month) uniqueness)
             monthly_aggs = preview_data.get("monthly_aggregates", [])
-            if monthly_aggs:
+            if monthly_aggs and year_val and month_val:
+                consolidated_aggs_by_emp: dict[int, dict] = {}
+                unlinked_aggs: list[dict] = []
+
                 for agg_data in monthly_aggs:
                     emp_code = str(agg_data.get("employee_code", "")).strip()
+                    comp = str(agg_data.get("company_name", "SPT")).strip().lower()
+                    act = actions_by_key.get((comp, emp_code)) or actions_by_key.get(emp_code)
+                    if act and (act.get("action") == "ignore"):
+                        continue
                     emp = employee_map.get(emp_code)
                     if not emp and employee_mappings and emp_code in employee_mappings:
                         mapped_id = int(employee_mappings[emp_code])
@@ -1221,52 +1488,115 @@ class AttendanceImportService:
                         )
                         emp = emp_result.scalar_one_or_none()
 
-                    if year_val and month_val:
-                        if emp:
-                            existing_agg = (await self.db.execute(
-                                select(MonthlyAttendanceAggregate).where(
-                                    MonthlyAttendanceAggregate.employee_id == emp.id,
-                                    MonthlyAttendanceAggregate.year == year_val,
-                                    MonthlyAttendanceAggregate.month == month_val,
-                                )
-                            )).scalar_one_or_none()
-                            if existing_agg:
-                                if is_skip:
-                                    continue
-                                await self.db.delete(existing_agg)
+                    if emp:
+                        emp_id = emp.id
+                        if emp_id not in consolidated_aggs_by_emp:
+                            consolidated_aggs_by_emp[emp_id] = {
+                                "agg_data": agg_data,
+                                "emp": emp,
+                                "emp_code": emp_code,
+                                "comp": comp,
+                            }
+                        else:
+                            # Prefer SPT over Old Bio, or record with higher Present count
+                            prev_item = consolidated_aggs_by_emp[emp_id]
+                            prev_p = (prev_item["agg_data"].get("present_count") or 0)
+                            curr_p = (agg_data.get("present_count") or 0)
+                            if curr_p > prev_p or (comp != "old bio" and prev_item["comp"] == "old bio"):
+                                consolidated_aggs_by_emp[emp_id] = {
+                                    "agg_data": agg_data,
+                                    "emp": emp,
+                                    "emp_code": emp_code,
+                                    "comp": comp,
+                                }
+                    else:
+                        unlinked_aggs.append({
+                            "agg_data": agg_data,
+                            "emp_code": emp_code,
+                            "comp": comp,
+                        })
 
-                        norm_dept_name = dept.name if dept else (emp.department.name if emp and emp.department else agg_data.get("department_name", ""))
-                        if norm_dept_name and norm_dept_name.upper() in ("DR", "DR."):
-                            norm_dept_name = "DOCTOR"
-
-                        new_agg = MonthlyAttendanceAggregate(
-                            import_id=import_session.id,
-                            employee_id=emp.id if emp else None,
-                            employee_code=emp_code,
-                            employee_name=agg_data.get("employee_name", ""),
-                            department_name=norm_dept_name,
-                            company_name=agg_data.get("company_name", ""),
-                            year=year_val,
-                            month=month_val,
-                            total_work_duration=agg_data.get("total_work_duration"),
-                            total_ot=agg_data.get("total_ot"),
-                            present_count=agg_data.get("present_count", 0),
-                            absent_count=agg_data.get("absent_count", 0),
-                            weekly_off_count=agg_data.get("weekly_off_count", 0),
-                            holidays_count=agg_data.get("holidays_count", 0),
-                            leaves_taken=agg_data.get("leaves_taken", 0),
-                            late_by_hrs=agg_data.get("late_by_hrs"),
-                            late_by_days=agg_data.get("late_by_days", 0),
-                            late_days_device=agg_data.get("late_days_device", 0),
-                            late_days_qualifying=agg_data.get("late_days_qualifying", 0),
-                            lop_days=agg_data.get("lop_days", 0),
-                            early_by_hrs=agg_data.get("early_by_hrs"),
-                            early_going_by_days=agg_data.get("early_going_by_days", 0),
-                            total_duration_with_ot=agg_data.get("total_duration_with_ot"),
-                            average_working_hrs=agg_data.get("average_working_hrs"),
-                            has_zero_punches=agg_data.get("has_zero_punches", False),
+                # Delete existing aggregates for these employees in this period
+                target_emp_ids = list(consolidated_aggs_by_emp.keys())
+                if target_emp_ids:
+                    await self.db.execute(
+                        delete(MonthlyAttendanceAggregate).where(
+                            MonthlyAttendanceAggregate.employee_id.in_(target_emp_ids),
+                            MonthlyAttendanceAggregate.year == year_val,
+                            MonthlyAttendanceAggregate.month == month_val,
                         )
-                        self.db.add(new_agg)
+                    )
+
+                # Insert consolidated aggregates
+                for item in consolidated_aggs_by_emp.values():
+                    agg_data = item["agg_data"]
+                    emp = item["emp"]
+                    emp_code = item["emp_code"]
+                    norm_dept_name = emp.department.name if emp and emp.department else agg_data.get("department_name", "")
+                    if norm_dept_name and norm_dept_name.upper() in ("DR", "DR."):
+                        norm_dept_name = "DOCTOR"
+
+                    new_agg = MonthlyAttendanceAggregate(
+                        import_id=import_session.id,
+                        employee_id=emp.id,
+                        employee_code=emp_code,
+                        employee_name=agg_data.get("employee_name", ""),
+                        department_name=norm_dept_name,
+                        company_name=agg_data.get("company_name", ""),
+                        year=year_val,
+                        month=month_val,
+                        total_work_duration=agg_data.get("total_work_duration"),
+                        total_ot=agg_data.get("total_ot"),
+                        present_count=agg_data.get("present_count", 0),
+                        absent_count=agg_data.get("absent_count", 0),
+                        weekly_off_count=agg_data.get("weekly_off_count", 0),
+                        holidays_count=agg_data.get("holidays_count", 0),
+                        leaves_taken=agg_data.get("leaves_taken", 0),
+                        late_by_hrs=agg_data.get("late_by_hrs"),
+                        late_by_days=agg_data.get("late_by_days", 0),
+                        late_days_device=agg_data.get("late_days_device", 0),
+                        late_days_qualifying=agg_data.get("late_days_qualifying", 0),
+                        lop_days=agg_data.get("lop_days", 0),
+                        early_by_hrs=agg_data.get("early_by_hrs"),
+                        early_going_by_days=agg_data.get("early_going_by_days", 0),
+                        total_duration_with_ot=agg_data.get("total_duration_with_ot"),
+                        average_working_hrs=agg_data.get("average_working_hrs"),
+                        has_zero_punches=agg_data.get("has_zero_punches", False),
+                    )
+                    self.db.add(new_agg)
+
+                # Insert unlinked aggregates if any
+                for item in unlinked_aggs:
+                    agg_data = item["agg_data"]
+                    emp_code = item["emp_code"]
+                    new_agg = MonthlyAttendanceAggregate(
+                        import_id=import_session.id,
+                        employee_id=None,
+                        employee_code=emp_code,
+                        employee_name=agg_data.get("employee_name", ""),
+                        department_name=agg_data.get("department_name", "Default"),
+                        company_name=agg_data.get("company_name", ""),
+                        year=year_val,
+                        month=month_val,
+                        total_work_duration=agg_data.get("total_work_duration"),
+                        total_ot=agg_data.get("total_ot"),
+                        present_count=agg_data.get("present_count", 0),
+                        absent_count=agg_data.get("absent_count", 0),
+                        weekly_off_count=agg_data.get("weekly_off_count", 0),
+                        holidays_count=agg_data.get("holidays_count", 0),
+                        leaves_taken=agg_data.get("leaves_taken", 0),
+                        late_by_hrs=agg_data.get("late_by_hrs"),
+                        late_by_days=agg_data.get("late_by_days", 0),
+                        late_days_device=agg_data.get("late_days_device", 0),
+                        late_days_qualifying=agg_data.get("late_days_qualifying", 0),
+                        lop_days=agg_data.get("lop_days", 0),
+                        early_by_hrs=agg_data.get("early_by_hrs"),
+                        early_going_by_days=agg_data.get("early_going_by_days", 0),
+                        total_duration_with_ot=agg_data.get("total_duration_with_ot"),
+                        average_working_hrs=agg_data.get("average_working_hrs"),
+                        has_zero_punches=agg_data.get("has_zero_punches", False),
+                    )
+                    self.db.add(new_agg)
 
             import_session.report_type = preview_data.get("report_type")
             import_session.company_name = preview_data.get("company_name")

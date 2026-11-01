@@ -472,12 +472,14 @@ async def monthly_attendance_summary(
         # Lookup aggregate
         agg = agg_map.get(emp.id) or agg_code_map.get(emp.biometric_code) or agg_code_map.get(emp.employee_id)
 
-        has_punches = any(
-            (a.source_in_time or a.source_out_time or a.check_in_datetime or a.check_out_datetime)
-            for a in att_records
-        ) if att_records else False
-
-        is_zero_punch = (not has_punches) or (agg.has_zero_punches if agg else False)
+        if att_records:
+            has_punches = any(
+                (a.source_in_time or a.source_out_time or a.check_in_datetime or a.check_out_datetime)
+                for a in att_records
+            )
+            is_zero_punch = not has_punches
+        else:
+            is_zero_punch = (agg.has_zero_punches if agg else True)
 
         if is_zero_punch:
             late_days_device = 0

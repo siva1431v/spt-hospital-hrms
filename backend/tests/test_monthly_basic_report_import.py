@@ -385,3 +385,37 @@ async def test_finalized_payroll_import_block():
         # Reopen period
         period.status = PayrollStatus.DRAFT
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_monthly_summary_report_import_and_review_rows():
+    """Verify Monthly Status Report (Summary Report) parses review rows and commits cleanly."""
+    fixture_oct = "tests/fixtures/Final_Attendance_Oct_2026.pdf"
+    if not os.path.exists(fixture_oct):
+        pytest.skip(f"Fixture {fixture_oct} not found")
+
+    async with AsyncSessionLocal() as session:
+        service = AttendanceImportService(session, user_id=1)
+        preview = await service.preview(fixture_oct, "Final_Attendance_Oct_2026.pdf", 100000)
+
+        assert preview["report_type"] == "Monthly Status Report (Summary Report)"
+        assert preview["period_year"] == 2026
+        assert preview["period_month"] == 10
+        assert len(preview["review_rows"]) > 0
+
+        # Simulate review actions
+        actions = [
+            {
+                "company": r["company"],
+                "employee_code": r["employee_code"],
+                "action": r["default_action"],
+                "employee_id": r["matched_employee_id"],
+                "save_as_alias": False,
+            }
+            for r in preview["review_rows"]
+        ]
+        preview["review_actions"] = actions
+
+        commit_res = await service.commit(preview, duplicate_action="update")
+        assert commit_res["status"] in ("COMPLETED", "COMPLETED_WITH_WARNINGS")
+        assert commit_res["errors"] == 0
