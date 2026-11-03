@@ -231,13 +231,18 @@ export default function ImportPdfWizardPage() {
 
   // Update a single row's action
   const updateReviewAction = (key: string, updates: Partial<ReviewActionState>) => {
-    setReviewActions((prev) => ({
-      ...prev,
-      [key]: {
-        ...(prev[key] || { action: 'link', employee_id: null, save_as_alias: false }),
-        ...updates,
-      },
-    }))
+    setReviewActions((prev) => {
+      const current = prev[key] || { action: 'link', employee_id: null, save_as_alias: false }
+      const merged = { ...current, ...updates }
+      // If action is changed to 'ignore', untick save_as_alias automatically
+      if (merged.action === 'ignore') {
+        merged.save_as_alias = false
+      }
+      return {
+        ...prev,
+        [key]: merged,
+      }
+    })
   }
 
   // Step 4: Commit Import
@@ -324,6 +329,56 @@ export default function ImportPdfWizardPage() {
     mismatch: previewData?.review_rows?.filter((r) => r.status === 'NAME_MISMATCH').length || 0,
     newStaff: previewData?.review_rows?.filter((r) => r.status === 'NEW_EMPLOYEE').length || 0,
     dups: previewData?.review_rows?.filter((r) => r.status === 'DUPLICATE_SUSPECT').length || 0,
+  }
+
+  // Helper to determine if a review row is eligible for Save Alias
+  const isRowEligibleForSaveAlias = (row: ReviewRowItem) => {
+    const key = `${row.company}_${row.employee_code}`
+    const defaultAct = (row.default_action || row.action || row.suggested_action || 'link') as 'link' | 'create' | 'ignore'
+    const currentAction = reviewActions[key] || {
+      action: defaultAct,
+      employee_id: row.matched_employee_id ?? row.mapped_employee_id ?? null,
+      save_as_alias: Boolean(row.save_as_alias),
+    }
+    return currentAction.action === 'link' && Boolean(currentAction.employee_id)
+  }
+
+  const visibleEligibleRows = filteredReviewRows.filter(isRowEligibleForSaveAlias)
+
+  const selectedEligibleCount = visibleEligibleRows.filter((row) => {
+    const key = `${row.company}_${row.employee_code}`
+    const defaultAct = (row.default_action || row.action || row.suggested_action || 'link') as 'link' | 'create' | 'ignore'
+    const currentAction = reviewActions[key] || {
+      action: defaultAct,
+      employee_id: row.matched_employee_id ?? row.mapped_employee_id ?? null,
+      save_as_alias: Boolean(row.save_as_alias),
+    }
+    return Boolean(currentAction.save_as_alias)
+  }).length
+
+  const eligibleCount = visibleEligibleRows.length
+  const allSelected = eligibleCount > 0 && selectedEligibleCount === eligibleCount
+  const someSelected = selectedEligibleCount > 0
+
+  const handleToggleSelectAll = () => {
+    const targetChecked = !allSelected
+    setReviewActions((prev) => {
+      const next = { ...prev }
+      for (const row of visibleEligibleRows) {
+        const key = `${row.company}_${row.employee_code}`
+        const defaultAct = (row.default_action || row.action || row.suggested_action || 'link') as 'link' | 'create' | 'ignore'
+        const current = next[key] || {
+          action: defaultAct,
+          employee_id: row.matched_employee_id ?? row.mapped_employee_id ?? null,
+          save_as_alias: Boolean(row.save_as_alias),
+        }
+        next[key] = {
+          ...current,
+          save_as_alias: targetChecked,
+        }
+      }
+      return next
+    })
   }
 
   return (
@@ -610,7 +665,29 @@ export default function ImportPdfWizardPage() {
                       <th className="p-2.5">Status</th>
                       <th className="p-2.5">Attendance Counts</th>
                       <th className="p-2.5">Action</th>
-                      <th className="p-2.5 text-center">Save Alias</th>
+                      <th className="p-2.5 text-center w-36">
+                        <div className="flex flex-col items-center justify-center gap-0.5">
+                          <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold select-none">
+                            <input
+                              type="checkbox"
+                              ref={(el) => {
+                                if (el) {
+                                  el.indeterminate = someSelected && !allSelected
+                                }
+                              }}
+                              checked={allSelected}
+                              onChange={handleToggleSelectAll}
+                              disabled={eligibleCount === 0}
+                              title="Select all eligible rows for Save Alias"
+                              className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-40"
+                            />
+                            <span>Save Alias</span>
+                          </label>
+                          <span className="text-[9px] font-normal normal-case text-slate-500">
+                            Select All {eligibleCount > 0 ? `(${selectedEligibleCount}/${eligibleCount})` : ''}
+                          </span>
+                        </div>
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-[11px]">
@@ -721,11 +798,13 @@ export default function ImportPdfWizardPage() {
                             <div className="space-y-1">
                               <select
                                 value={currentAction.action}
-                                onChange={(e) =>
+                                onChange={(e) => {
+                                  const nextAct = e.target.value as 'link' | 'create' | 'ignore'
                                   updateReviewAction(key, {
-                                    action: e.target.value as 'link' | 'create' | 'ignore',
+                                    action: nextAct,
+                                    ...(nextAct === 'ignore' ? { save_as_alias: false } : {}),
                                   })
-                                }
+                                }}
                                 className="h-7 text-xs bg-white border border-slate-200 rounded px-1.5 w-full"
                               >
                                 <option value="link">Link to Employee</option>
@@ -757,14 +836,21 @@ export default function ImportPdfWizardPage() {
                           <td className="p-2.5 text-center">
                             <input
                               type="checkbox"
-                              checked={currentAction.save_as_alias}
+                              checked={Boolean(currentAction.save_as_alias)}
                               onChange={(e) =>
                                 updateReviewAction(key, {
                                   save_as_alias: e.target.checked,
                                 })
                               }
-                              title="Save as alias in device_code_aliases for automatic resolution in future months"
-                              className="rounded text-teal-600"
+                              disabled={currentAction.action === 'ignore'}
+                              title={
+                                currentAction.action === 'ignore'
+                                  ? 'Cannot save alias for ignored row'
+                                  : 'Save as alias in device_code_aliases for automatic resolution in future months'
+                              }
+                              className={`rounded text-teal-600 focus:ring-teal-500 ${
+                                currentAction.action === 'ignore' ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
+                              }`}
                             />
                           </td>
                         </tr>
