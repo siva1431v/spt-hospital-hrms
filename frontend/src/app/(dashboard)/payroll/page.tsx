@@ -72,6 +72,8 @@ interface PayrollRecordItem {
   salary_verified?: boolean
   salary_source?: string
   is_manual_override?: boolean
+  anomaly_warning?: string | null
+  joining_date?: string | null
 }
 
 interface UnverifiedEmployee {
@@ -267,6 +269,24 @@ function PayrollContent() {
 
   const handleFinalize = async (bypassCoverageWarning = false) => {
     if (!currentPeriod) return
+
+    const anomalousRecords = records.filter(
+      (r) => (r.present_days > 0 && (r.payable_days || 0) < r.present_days) || (r.present_days > 0 && (r.net_salary || 0) <= 0)
+    )
+    if (anomalousRecords.length > 0) {
+      const details = anomalousRecords
+        .map(
+          (r) =>
+            `${r.employee_name || 'Staff'} (#${r.biometric_code || r.employee_code}): ${
+              r.anomaly_warning || ((r.payable_days || 0) < r.present_days ? `Payable ${r.payable_days}d < Present ${r.present_days}d` : '₹0 Net Salary with present attendance')
+            }`
+        )
+        .join('\n• ')
+      alert(
+        `Cannot finalize payroll for ${MONTH_NAMES[month]} ${year}:\n\n${anomalousRecords.length} staff member(s) have calculation anomalies:\n• ${details}\n\nPlease recalculate payroll or resolve their basic salary / joining dates before finalization.`
+      )
+      return
+    }
 
     if (!bypassCoverageWarning && coverage && !coverage.is_fully_covered) {
       setShowIncompleteModal(true)
@@ -544,6 +564,30 @@ function PayrollContent() {
         </div>
       )}
 
+      {/* Calculation Anomalies Banner */}
+      {!loading && records.filter((r) => (r.present_days > 0 && (r.payable_days || 0) < r.present_days) || (r.present_days > 0 && (r.net_salary || 0) <= 0)).length > 0 && (
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="text-xs font-bold text-rose-900">
+              {records.filter((r) => (r.present_days > 0 && (r.payable_days || 0) < r.present_days) || (r.present_days > 0 && (r.net_salary || 0) <= 0)).length} Payroll Calculation Anomalies Detected — Finalization Blocked
+            </h4>
+            <p className="text-[11px] text-rose-700">
+              The following staff members have present attendance but either have payable days less than present days, or ₹0 net salary. Please review their salary setup or recalculate before finalizing:
+            </p>
+            <ul className="text-[10px] text-rose-800 list-disc list-inside space-y-0.5 pt-1">
+              {records
+                .filter((r) => (r.present_days > 0 && (r.payable_days || 0) < r.present_days) || (r.present_days > 0 && (r.net_salary || 0) <= 0))
+                .map((r) => (
+                  <li key={r.id}>
+                    <strong>{r.employee_name || 'Staff'}</strong> (#{r.biometric_code || r.employee_code}): {r.anomaly_warning || ((r.payable_days || 0) < r.present_days ? `Payable ${r.payable_days}d < Present ${r.present_days}d` : '₹0 Net Salary with present attendance')}
+                  </li>
+                ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
       {/* Records Table */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
         {loading ? (
@@ -575,11 +619,29 @@ function PayrollContent() {
                   const lopDays = rec.lop_days || rec.loss_of_pay_days || 0
                   const lopDed = rec.lop_deduction || 0
                   const fundDed = rec.security_fund_deduction || 0
+                  const hasPayableDeficit = rec.present_days > 0 && (rec.payable_days || 0) < rec.present_days
+                  const hasZeroSalaryWithAttendance = rec.present_days > 0 && (rec.net_salary || 0) <= 0
+                  const warningReason = rec.anomaly_warning || (
+                    hasPayableDeficit
+                      ? `Payable days (${rec.payable_days}) < Present days (${rec.present_days})`
+                      : hasZeroSalaryWithAttendance
+                      ? `₹0 net salary despite ${rec.present_days} present days`
+                      : null
+                  )
                   return (
                     <tr key={rec.id} className="hover:bg-slate-50/80">
                       <td className="p-3 pl-4 whitespace-nowrap">
-                        <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                        <div className="font-bold text-slate-900 flex items-center flex-wrap gap-1.5">
                           {rec.employee_name || 'Staff'}
+                          {warningReason && (
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-rose-100 text-rose-800 font-bold border border-rose-300"
+                              title={warningReason}
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5 text-rose-600 shrink-0" />
+                              {warningReason}
+                            </span>
+                          )}
                           {(rec.salary_verified === false || rec.salary_source === 'PLACEHOLDER') && (
                             <span
                               className="px-1.5 py-0.5 rounded text-[9px] bg-amber-100 text-amber-800 font-bold border border-amber-300"
@@ -608,7 +670,9 @@ function PayrollContent() {
                       <td className="p-3 text-center font-mono text-amber-700 whitespace-nowrap">{rec.half_days || 0}</td>
                       <td className="p-3 text-center font-mono text-blue-700 whitespace-nowrap">{rec.leave_days || 0}</td>
                       <td className="p-3 text-center font-mono text-purple-700 whitespace-nowrap">{rec.off_duty_days || 0}</td>
-                      <td className="p-3 text-center font-mono font-extrabold bg-slate-100/60 text-slate-900 whitespace-nowrap">
+                      <td className={`p-3 text-center font-mono font-extrabold whitespace-nowrap ${
+                        hasPayableDeficit ? 'bg-rose-100 text-rose-900 border border-rose-300' : 'bg-slate-100/60 text-slate-900'
+                      }`}>
                         {rec.payable_days}
                       </td>
                       <td className="p-3 text-right font-mono font-semibold text-slate-800 whitespace-nowrap">
@@ -634,7 +698,9 @@ function PayrollContent() {
                       <td className="p-3 text-right font-mono font-semibold text-emerald-700 whitespace-nowrap">
                         {(rec.collection ?? 0) > 0 ? `+${formatINR(rec.collection)}` : '₹0.00'}
                       </td>
-                      <td className="p-3 text-right font-mono font-extrabold bg-teal-50/40 text-teal-700 text-sm whitespace-nowrap">
+                      <td className={`p-3 text-right font-mono font-extrabold text-sm whitespace-nowrap ${
+                        hasZeroSalaryWithAttendance ? 'bg-rose-100 text-rose-900 border border-rose-300' : 'bg-teal-50/40 text-teal-700'
+                      }`}>
                         {formatINR(rec.net_salary ?? rec.total_salary)}
                       </td>
                       <td className="p-3 text-center pr-4 whitespace-nowrap">

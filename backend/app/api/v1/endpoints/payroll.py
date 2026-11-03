@@ -1,7 +1,8 @@
 """
 SPT Hospital HRMS — Payroll API Endpoints
 """
-from datetime import datetime, timezone
+import calendar
+from datetime import datetime, timezone, date
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -409,42 +410,74 @@ async def get_payroll_records(
     result = await db.execute(query.offset(offset).limit(page_size))
     records = result.scalars().all()
 
+    days_in_period = calendar.monthrange(period.year, period.month)[1]
+    period_end_dt = date(period.year, period.month, days_in_period)
+
+    items_out = []
+    for r in records:
+        pres = float(r.present_days or 0.0)
+        pay = float(r.payable_days or 0.0)
+        net = float(r.net_salary or 0.0)
+        basic = float(r.basic_salary or 0.0)
+        emp = r.employee
+
+        anomaly_warning = None
+        if pay == 0 and pres > 0:
+            if emp and emp.joining_date and emp.joining_date > period_end_dt:
+                anomaly_warning = f"Joining date ({emp.joining_date}) after period"
+            elif emp and not emp.is_active:
+                anomaly_warning = "Inactive employee in payroll"
+            elif basic <= 0:
+                anomaly_warning = "Missing salary setup (₹0 basic)"
+            else:
+                anomaly_warning = "Payable days is 0 with attendance present"
+        elif net <= 0 and pres > 0:
+            if basic <= 0:
+                anomaly_warning = "Missing salary setup (₹0 basic)"
+            else:
+                anomaly_warning = "Net salary is ₹0 with attendance present"
+        elif pay < pres:
+            anomaly_warning = f"Payable days ({pay}) < Present days ({pres})"
+        elif emp and emp.joining_date and emp.joining_date > date(period.year, period.month, 1) and pres > (days_in_period - emp.joining_date.day + 1):
+            anomaly_warning = f"Attendance found before joining date ({emp.joining_date})"
+
+        items_out.append({
+            "id": r.id,
+            "payroll_period_id": r.period_id,
+            "employee_id": r.employee_id,
+            "employee_code": r.employee.employee_id if r.employee else None,
+            "biometric_code": r.employee.biometric_code if r.employee else None,
+            "employee_name": r.employee.full_name if r.employee else None,
+            "department": r.employee.department.name if r.employee and r.employee.department else None,
+            "joining_date": str(r.employee.joining_date) if (r.employee and r.employee.joining_date) else None,
+            "basic_salary": round(r.basic_salary, 2),
+            "gross_salary": round(r.gross_salary if r.gross_salary is not None else (r.salary_part + r.collection), 2),
+            "present_days": r.present_days,
+            "absent_days": r.absent_days,
+            "half_days": r.half_days,
+            "leave_days": r.leave_days,
+            "paid_leave_days": r.paid_leave_days,
+            "off_duty_days": r.off_duty_days,
+            "qualifying_late_days": r.qualifying_late_days or 0,
+            "loss_of_pay_days": r.lop_days if r.lop_days is not None else (r.loss_of_pay_days or 0.0),
+            "lop_days": r.lop_days if r.lop_days is not None else (r.loss_of_pay_days or 0.0),
+            "payable_days": r.payable_days,
+            "salary_part": r.salary_part,
+            "collection": r.collection,
+            "lifetime_collection": r.lifetime_collection,
+            "lop_deduction": round(r.lop_deduction or 0.0, 2),
+            "security_fund_deduction": round(r.security_fund_deduction or 0.0, 2),
+            "total_deductions": round(r.total_deductions if r.total_deductions is not None else 0.0, 2),
+            "deductions": round(r.total_deductions if r.total_deductions is not None else 0.0, 2),
+            "total_salary": round(r.net_salary, 2),
+            "net_salary": round(r.net_salary, 2),
+            "is_manual_override": r.is_manual_override,
+            "status": r.status.value,
+            "anomaly_warning": anomaly_warning,
+        })
+
     return {
-        "items": [
-            {
-                "id": r.id,
-                "payroll_period_id": r.period_id,
-                "employee_id": r.employee_id,
-                "employee_code": r.employee.employee_id if r.employee else None,
-                "biometric_code": r.employee.biometric_code if r.employee else None,
-                "employee_name": r.employee.full_name if r.employee else None,
-                "department": r.employee.department.name if r.employee and r.employee.department else None,
-                "basic_salary": round(r.basic_salary, 2),
-                "gross_salary": round(r.gross_salary if r.gross_salary is not None else (r.salary_part + r.collection), 2),
-                "present_days": r.present_days,
-                "absent_days": r.absent_days,
-                "half_days": r.half_days,
-                "leave_days": r.leave_days,
-                "paid_leave_days": r.paid_leave_days,
-                "off_duty_days": r.off_duty_days,
-                "qualifying_late_days": r.qualifying_late_days or 0,
-                "loss_of_pay_days": r.lop_days if r.lop_days is not None else (r.loss_of_pay_days or 0.0),
-                "lop_days": r.lop_days if r.lop_days is not None else (r.loss_of_pay_days or 0.0),
-                "payable_days": r.payable_days,
-                "salary_part": r.salary_part,
-                "collection": r.collection,
-                "lifetime_collection": r.lifetime_collection,
-                "lop_deduction": round(r.lop_deduction or 0.0, 2),
-                "security_fund_deduction": round(r.security_fund_deduction or 0.0, 2),
-                "total_deductions": round(r.total_deductions if r.total_deductions is not None else 0.0, 2),
-                "deductions": round(r.total_deductions if r.total_deductions is not None else 0.0, 2),
-                "total_salary": round(r.net_salary, 2),
-                "net_salary": round(r.net_salary, 2),
-                "is_manual_override": r.is_manual_override,
-                "status": r.status.value,
-            }
-            for r in records
-        ],
+        "items": items_out,
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -638,6 +671,26 @@ async def finalize_payroll(
         raise HTTPException(
             status_code=400,
             detail=f"Cannot finalize: {len(pending_exceptions)} unreviewed attendance exceptions remain for {period.period_name} ({summary_str}). Please review or dismiss them first."
+        )
+
+    # Check for invalid rows: payable days < present days, or net salary <= 0 with present days > 0
+    anomalous_records = []
+    for r in records:
+        pres = float(r.present_days or 0.0)
+        pay = float(r.payable_days or 0.0)
+        net = float(r.net_salary or 0.0)
+        emp = r.employee
+        emp_desc = f"{emp.full_name} (#{emp.biometric_code or emp.employee_id})" if emp else f"Employee #{r.employee_id}"
+
+        if pay < pres:
+            anomalous_records.append(f"{emp_desc}: payable days ({pay}) < present days ({pres})")
+        elif net <= 0 and pres > 0:
+            anomalous_records.append(f"{emp_desc}: net salary is ₹0 with {pres} present days")
+
+    if anomalous_records:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot finalize payroll for {period.period_name}: {len(anomalous_records)} employee(s) have payable anomalies: {'; '.join(anomalous_records)}. Please resolve these issues before finalization."
         )
 
     period.status = PayrollStatus.FINALIZED

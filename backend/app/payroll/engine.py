@@ -19,7 +19,14 @@ from sqlalchemy import select, func, extract, and_, delete
 from sqlalchemy.orm import selectinload
 
 from app.models.employee import Employee
-from app.models.attendance import Attendance, AttendanceStatus, MonthlyAttendanceAggregate
+from app.models.attendance import (
+    Attendance,
+    AttendanceStatus,
+    MonthlyAttendanceAggregate,
+    AttendanceException,
+    ExceptionSeverity,
+    ExceptionReviewStatus,
+)
 from app.models.leave import LeaveRequest, LeaveRequestStatus, LeaveType
 from app.models.payroll import (
     SalaryStructure, SalaryStructureItem, SalaryComponent,
@@ -100,13 +107,23 @@ class PayrollEngine:
             extract("year", Attendance.attendance_date) == year,
             extract("month", Attendance.attendance_date) == month,
         )
-        # Exclude dates before joining or after exit
-        if employee.joining_date:
-            att_query = att_query.where(Attendance.attendance_date >= employee.joining_date)
-        if hasattr(employee, 'exit_date') and employee.exit_date:
-            att_query = att_query.where(Attendance.attendance_date <= employee.exit_date)
         att_result = await self.db.execute(att_query)
-        attendance_records = att_result.scalars().all()
+        all_month_attendance = att_result.scalars().all()
+
+        # Check for attendance records before joining or after exit
+        att_before_join = [
+            a for a in all_month_attendance
+            if employee.joining_date and a.attendance_date < employee.joining_date
+            and (a.status in [AttendanceStatus.PRESENT, AttendanceStatus.PRESENT_OVERNIGHT, AttendanceStatus.HALF_DAY, AttendanceStatus.WEEKLY_OFF_PRESENT]
+                 or (getattr(a, "work_minutes", 0) or 0) > 0)
+        ]
+
+        # Employment window attendance records
+        attendance_records = [
+            a for a in all_month_attendance
+            if (not employee.joining_date or a.attendance_date >= employee.joining_date)
+            and (not hasattr(employee, 'exit_date') or not employee.exit_date or a.attendance_date <= employee.exit_date)
+        ]
 
         # 1. Load pre-computed monthly aggregate from PDF import (matched by employee_id or biometric/employee code)
         from sqlalchemy import or_
@@ -124,6 +141,40 @@ class PayrollEngine:
             )
         )
         monthly_agg = agg_result.scalars().first()
+
+        # Check if employee has attendance recorded before their joining date
+        has_att_before_join = bool(att_before_join) or (
+            monthly_agg is not None and employee.joining_date is not None and (
+                (employee.joining_date > month_end and (monthly_agg.present_count or 0) > 0) or
+                (employee.joining_date > month_start and (monthly_agg.present_count or 0) > effective_days_in_month)
+            )
+        )
+        if has_att_before_join:
+            exc_dt = employee.joining_date if (employee.joining_date and employee.joining_date <= month_end) else month_start
+            existing_exc_res = await self.db.execute(
+                select(AttendanceException).where(
+                    AttendanceException.employee_id == employee_id,
+                    AttendanceException.exception_type == "ATTENDANCE_BEFORE_JOINING",
+                    extract("year", AttendanceException.exception_date) == year,
+                    extract("month", AttendanceException.exception_date) == month,
+                )
+            )
+            if not existing_exc_res.scalar_one_or_none():
+                join_str = str(employee.joining_date)
+                self.db.add(
+                    AttendanceException(
+                        employee_id=employee_id,
+                        exception_date=exc_dt,
+                        exception_type="ATTENDANCE_BEFORE_JOINING",
+                        reason=f"Attendance found before joining date ({join_str}) in {calendar.month_name[month]} {year}",
+                        severity=ExceptionSeverity.WARNING,
+                        review_status=ExceptionReviewStatus.PENDING,
+                    )
+                )
+
+            # Ensure all-month attendance is included so days worked before joining are never silently cut
+            if att_before_join:
+                attendance_records = all_month_attendance
 
         # Load system settings
         from app.models.audit import SystemSetting
@@ -322,11 +373,19 @@ class PayrollEngine:
         per_day = base_salary / days_in_month if days_in_month > 0 else 0.0
         effective_present = min(present_days, float(days_in_month))
 
+        # Minimum guaranteed payable days: can NEVER give fewer payable days than the attendance days actually present
+        min_guaranteed_present_days = round(effective_present + (half_days * 0.5), 2)
+
         # Payable Days = Present + (Half * 0.5) + MIN(Total Absences, 3) + Holiday + Weekly Off + Weekly Off Present + Off Duty
         # Capped by effective days in month for joiners/exiters
         raw_payable = effective_present + (half_days * 0.5) + effective_paid_leave + holiday_days + weekly_off_days + weekly_off_present_days + off_duty_days
         if effective_days_in_month < days_in_month:
-            payable_days = round(min(raw_payable, float(effective_days_in_month)), 2)
+            if has_att_before_join:
+                # Attendance was found before joining date: do not truncate below actual present days or full month entitlement
+                payable_days = round(max(min_guaranteed_present_days, min(raw_payable, float(days_in_month))), 2)
+            else:
+                capped_payable = min(raw_payable, float(effective_days_in_month))
+                payable_days = round(max(min_guaranteed_present_days, capped_payable), 2)
         else:
             payable_days = round(raw_payable, 2)
         salary_part = round(min(payable_days * per_day, base_salary), 2)
